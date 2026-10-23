@@ -54,7 +54,7 @@
   let planToken = 0;
 
   function runPlan(mapJson, algo, informed, timeoutMs) {
-    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux3');
+    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux4');
     const worker = planWorker;
     const id = ++planToken;
     return new Promise((resolve, reject) => {
@@ -548,7 +548,7 @@
       userSteered = true;
       if (followCam) {
         followCam = false;
-        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+        releaseCameraLock();
       }
     };
     canvas.addEventListener('pointerdown', markSteered, true);
@@ -658,7 +658,12 @@
     );
     // viewBoundingSphere locks the camera to the target frame. Unlock so the
     // user can still orbit, pan, and zoom out to the whole globe.
-    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    releaseCameraLock();
+  }
+
+  function releaseCameraLock() {
+    if (!viewer || !globalThis.DemoFraming) return;
+    DemoFraming.unlockCamera(viewer.camera, Cesium.Matrix4.IDENTITY);
   }
 
   function clearMapEntities() {
@@ -958,7 +963,7 @@
     followCam = false;
     if (viewer) {
       viewer.trackedEntity = undefined;
-      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      releaseCameraLock();
     }
     if (droneEntity) droneEntity.show = false;
     const trail = viewer && viewer.entities.getById('uav-trail');
@@ -1010,7 +1015,7 @@
     }
   }
 
-  const BUNDLE_URL = './guomao_osm.json?v=ux3';
+  const BUNDLE_URL = './guomao_osm.json?v=ux4';
   const OSM_CACHE_KEY = 'uav-osm-buildings-v1';
 
   function buildingBlurb(map) {
@@ -1046,7 +1051,8 @@
   }
 
   function commitCorridor(start, goal, bbox, buildings, source, background) {
-    const hadPath = lastPath.length > 0 || flight.active;
+    const preserveFlight = flight.active;
+    const hadPath = lastPath.length > 0 || preserveFlight;
     stopFlight();
     lastPath = [];
     removePathEntity();
@@ -1070,8 +1076,10 @@
       (offlineTemplate && offlineTemplate.radars) || baseMap.radars
     );
     fillLatLon(baseMap);
-    const keepCamera = !!background || userSteered;
+    // Explicit 加载地图 always recenters. A background OSM arrival recenters
+    // too, unless the user has panned or a chase flight is in progress.
     if (!background) userSteered = false;
+    const keepCamera = background && (userSteered || preserveFlight);
     rebuildCesiumScene(baseMap, keepCamera);
     if (!keepCamera) userSteered = false;
     return hadPath;

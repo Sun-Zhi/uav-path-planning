@@ -145,6 +145,16 @@
     };
   }
 
+  // viewBoundingSphere/lookAt write the local offset and leave positionWC stale.
+  // lookAtTransform copies that cached world pose, so an unlock on the first
+  // frame restores Cesium's default Americas camera. Reading positionWC runs
+  // the camera update first and keeps the pose we just set.
+  function unlockCamera(camera, identityTransform) {
+    if (!camera || typeof camera.lookAtTransform !== 'function') return;
+    void camera.positionWC;
+    camera.lookAtTransform(identityTransform);
+  }
+
   return {
     verticalFovRad: verticalFovRad,
     enuDelta: enuDelta,
@@ -156,5 +166,6 @@
     compassBearingDeg: compassBearingDeg,
     teachingRadarPositions: teachingRadarPositions,
     sectorRing: sectorRing,
+    unlockCamera: unlockCamera,
   };
 });
