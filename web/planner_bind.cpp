@@ -1,5 +1,6 @@
 #include <emscripten/bind.h>
 #include "uav/astar3d.hpp"
+#include "uav/geo.hpp"
 #include "uav/radar.hpp"
 #include "uav/rrt_star.hpp"
 #include <cmath>
@@ -8,7 +9,8 @@
 
 namespace {
 
-std::string serialize_result(const uav::PlannerStats& st, double mean_pd,
+std::string serialize_result(const uav::MapConfig& cfg,
+                             const uav::PlannerStats& st, double mean_pd,
                              double max_pd) {
   std::ostringstream out;
   out.setf(std::ios::fixed);
@@ -21,12 +23,22 @@ std::string serialize_result(const uav::PlannerStats& st, double mean_pd,
       << "\"nodes\":" << st.nodes_expanded << ","
       << "\"time_ms\":" << st.time_ms << ","
       << "\"mean_pd\":" << mean_pd << ","
-      << "\"max_pd\":" << max_pd << ","
-      << "\"path\":[";
+      << "\"max_pd\":" << max_pd << ",";
+  if (cfg.geo_frame) {
+    out << "\"origin\":{\"lat\":" << cfg.origin.lat << ",\"lon\":"
+        << cfg.origin.lon << ",\"alt\":" << cfg.origin.alt << "},";
+  }
+  out << "\"path\":[";
   for (size_t i = 0; i < st.path.size(); ++i) {
     const auto& p = st.path[i];
     if (i) out << ",";
-    out << "{\"x\":" << p.x << ",\"y\":" << p.y << ",\"z\":" << p.z << "}";
+    if (cfg.geo_frame) {
+      uav::GeoPoint g = uav::geo_from_enu(cfg.origin, p);
+      out << "{\"lat\":" << g.lat << ",\"lon\":" << g.lon << ",\"alt\":" << g.alt
+          << "}";
+    } else {
+      out << "{\"x\":" << p.x << ",\"y\":" << p.y << ",\"z\":" << p.z << "}";
+    }
   }
   out << "]}";
   return out.str();
@@ -50,7 +62,7 @@ std::string plan(std::string map_json, std::string algo, bool informed) {
     }
     double mean_pd = 0, max_pd = 0;
     uav::path_pd_stats(cfg.radars, st.path, cfg.uav_rcs, mean_pd, max_pd);
-    return serialize_result(st, mean_pd, max_pd);
+    return serialize_result(cfg, st, mean_pd, max_pd);
   } catch (const std::exception& e) {
     std::ostringstream out;
     out << "{\"success\":false,\"path_length\":0,\"path_cost\":0,"
