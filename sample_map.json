@@ -1,6 +1,8 @@
 {
-  "comment": "Simplified urban canyon: AABB buildings + radar/EW soft risk zones",
+  "comment": "Urban canyon + teaching SNR/Pd radars (SPY-6-class & JY-27-class, lab-scaled — not real params)",
   "resolution": 2.0,
+  "uav_rcs": 0.1,
+  "pd_cost_weight": 25.0,
   "bounds": {
     "min": {"x": 0, "y": 0, "z": 0},
     "max": {"x": 100, "y": 100, "z": 40}
@@ -36,16 +38,44 @@
   ],
   "risk_zones": [
     {
-      "name": "radar_coverage_SW",
-      "min": {"x": 5, "y": 35, "z": 0},
-      "max": {"x": 28, "y": 55, "z": 25},
-      "risk_multiplier": 6.0
-    },
-    {
       "name": "ew_jammer_corridor",
       "min": {"x": 55, "y": 55, "z": 5},
       "max": {"x": 75, "y": 85, "z": 30},
-      "risk_multiplier": 8.0
+      "risk_multiplier": 4.0
+    }
+  ],
+  "radars": [
+    {
+      "id": "us_spy6_class",
+      "label": "US SPY-6–class (teaching, scaled) / 教学近似",
+      "band": "S (~3 GHz label)",
+      "position": {"x": 40, "y": 5, "z": 2},
+      "yaw_deg": 90,
+      "pitch_deg": 8,
+      "az_hpbw_deg": 12,
+      "el_hpbw_deg": 10,
+      "max_range_m": 55,
+      "snr_ref_linear": 200,
+      "r_ref_m": 25,
+      "sigma_ref_m2": 0.1,
+      "snr_thresh_db": 10,
+      "rcs_lo_factor": 1.0
+    },
+    {
+      "id": "cn_jy27_class",
+      "label": "CN JY-27–class (teaching, scaled) / 教学近似",
+      "band": "VHF (~300 MHz label)",
+      "position": {"x": 5, "y": 50, "z": 2},
+      "yaw_deg": 0,
+      "pitch_deg": 5,
+      "az_hpbw_deg": 35,
+      "el_hpbw_deg": 25,
+      "max_range_m": 80,
+      "snr_ref_linear": 80,
+      "r_ref_m": 35,
+      "sigma_ref_m2": 0.1,
+      "snr_thresh_db": 8,
+      "rcs_lo_factor": 4.0
     }
   ]
 }
