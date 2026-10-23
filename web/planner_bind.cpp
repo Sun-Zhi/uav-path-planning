@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <emscripten/bind.h>
 #include "uav/astar3d.hpp"
 #include "uav/geo.hpp"
@@ -57,7 +58,14 @@ std::string plan(std::string map_json, std::string algo, bool informed) {
     if (algo == "rrtstar") {
       uav::RRTStarParams params;
       params.informed_sampling = informed;
-      params.max_iterations = 5000;
+      const double res = cfg.resolution;
+      const double dx = cfg.bounds.max_pt.x - cfg.bounds.min_pt.x;
+      const double dy = cfg.bounds.max_pt.y - cfg.bounds.min_pt.y;
+      const double span = std::max(dx, dy);
+      params.max_iterations = span > 500.0 ? 8000 : 5000;
+      params.step_size = std::max(3.0, res * 1.25);
+      params.rewire_radius = std::max(10.0, res * 4.0);
+      params.goal_tolerance = std::max(4.0, res * 1.5);
       params.seed = 42;
       uav::RRTStar3D rrt(env, params);
       st = rrt.plan(cfg.start, cfg.goal);
