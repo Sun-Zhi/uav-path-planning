@@ -73,6 +73,10 @@ test('demo page shows the sample globe before Overpass and resizes the viewer', 
   assert.match(app, /corridorFocus/);
   assert.match(app, /viewer\.resize\(/);
   assert.match(app, /viewBoundingSphere/);
+  assert.match(app, /new Worker\(/);
+  assert.match(app, /worker\.terminate\(/);
+  assert.match(app, /withTimeout\(/);
+  assert.equal((app.match(/spinner\.classList\.add\(/g) || []).length, 1);
   assert.equal(app.includes('midLat - 0.006'), false);
   assert.match(html, /app\.js\?v=/);
   assert.match(html, /framing\.js\?v=/);

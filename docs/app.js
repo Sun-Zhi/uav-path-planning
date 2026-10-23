@@ -9,7 +9,6 @@
 
   let baseMap = null;
   let offlineTemplate = null;
-  let plannerModule = null;
   let viewer = null;
   let pathEntity = null;
   let droneEntity = null;
@@ -33,6 +32,63 @@
     if (!el) return;
     el.textContent = text || '';
     el.classList.toggle('show', !!show && !!text);
+  }
+
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      Promise.resolve(promise).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  let planWorker = null;
+  let planToken = 0;
+
+  function runPlan(mapJson, algo, informed, timeoutMs) {
+    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux2');
+    const worker = planWorker;
+    const id = ++planToken;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        worker.removeEventListener('message', onMsg);
+        worker.removeEventListener('error', onErr);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try { worker.terminate(); } catch (e) { /* already dead */ }
+        if (planWorker === worker) planWorker = null;
+        finish(reject, new Error(
+          '规划超时（' + Math.round(timeoutMs / 1000) +
+            's），已中止并恢复页面。\nPlanning timed out and was stopped.'
+        ));
+      }, timeoutMs);
+      const onMsg = (ev) => {
+        if (!ev.data || ev.data.id !== id) return;
+        if (ev.data.error) finish(reject, new Error(ev.data.error));
+        else finish(resolve, ev.data.raw);
+      };
+      const onErr = (ev) => {
+        try { worker.terminate(); } catch (e) { /* already dead */ }
+        if (planWorker === worker) planWorker = null;
+        finish(reject, new Error(ev.message || 'Planner worker failed'));
+      };
+      worker.addEventListener('message', onMsg);
+      worker.addEventListener('error', onErr);
+      worker.postMessage({ id: id, mapJson: mapJson, algo: algo, informed: informed });
+    });
   }
 
   function num(id, fallback) {
@@ -982,15 +1038,6 @@
     }
   }
 
-  async function ensurePlanner() {
-    if (plannerModule) return plannerModule;
-    if (typeof createPlanner !== 'function') {
-      throw new Error('createPlanner not found — rebuild WASM (./web/build.sh)');
-    }
-    plannerModule = await createPlanner();
-    return plannerModule;
-  }
-
   async function loadSampleAndShow() {
     setChip('正在打开离线样例…', true);
     setStats('Loading offline sample…', '');
@@ -1051,11 +1098,17 @@
 
     try {
       const bbox = padBbox(start, goal, 1500);
-      const buildings = await fetchOsmBuildings(
+      const osmJob = fetchOsmBuildings(
         bbox.minLat,
         bbox.minLon,
         bbox.maxLat,
         bbox.maxLon
+      );
+      osmJob.catch(() => {});
+      const buildings = await withTimeout(
+        osmJob,
+        22000,
+        'Overpass 超时（22s）。仍显示当前建筑，可稍后重试「加载地图」。'
       );
       if (seq !== loadSeq) return;
       if (!buildings.length) throw new Error('Overpass returned no building footprints');
@@ -1111,20 +1164,27 @@
   }
 
   async function onPlan() {
+    if (planBtn.disabled) return;
     planBtn.disabled = true;
+    spinner.textContent = 'Planning…';
     spinner.classList.add('show');
     const stale = latLonStale();
     setStats('Planning…', '');
-    stopFlight();
     const planSeq = loadSeq;
+    let tick = 0;
     try {
+      stopFlight();
       const map = currentMapJson();
       rebuildCesiumScene(map, true);
-      const mod = await ensurePlanner();
       const algo = $('algo').value;
       lastAlgo = algo;
       const informed = $('informed').checked;
-      const raw = mod.plan(JSON.stringify(map), algo, informed);
+      const t0 = performance.now();
+      tick = setInterval(() => {
+        spinner.textContent = 'Planning… ' + Math.floor((performance.now() - t0) / 1000) + 's';
+      }, 400);
+      // WASM runs in a worker. A 20s cap always clears this overlay.
+      const raw = await runPlan(JSON.stringify(map), algo, informed, 20000);
       const result = JSON.parse(raw);
       if (planSeq !== loadSeq) {
         setStats('建筑已在规划期间更新，请再点一次「规划」。\nBuildings changed during planning — Plan again.', 'err');
@@ -1164,7 +1224,9 @@
       console.error(e);
       setStats(`Error: ${e.message || e}`, 'err');
     } finally {
+      if (tick) clearInterval(tick);
       spinner.classList.remove('show');
+      spinner.textContent = 'Planning…';
       planBtn.disabled = false;
     }
   }
@@ -1244,7 +1306,6 @@
       console.warn(e);
       setChip('OSM 加载失败 · 仍显示当前建筑', true);
     });
-    ensurePlanner().catch((e) => console.warn('WASM preload:', e));
   }
 
   main().catch((e) => {
