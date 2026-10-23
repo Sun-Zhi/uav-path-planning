@@ -299,34 +299,68 @@ function radarWedge(radar) {
   return group;
 }
 
-/** Simple quadrotor mesh for chase/FPV reference (hidden in pure FPV). */
+/** Drone icon (billboard) + small quad body for orientation. */
+function makeDroneIconTexture() {
+  const s = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = s;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, s, s);
+  // glow
+  const g = ctx.createRadialGradient(128, 128, 10, 128, 128, 120);
+  g.addColorStop(0, 'rgba(61,214,140,0.35)');
+  g.addColorStop(1, 'rgba(61,214,140,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
+  ctx.strokeStyle = '#3dd68c';
+  ctx.fillStyle = '#1a2332';
+  ctx.lineWidth = 10;
+  ctx.lineCap = 'round';
+  // X arms
+  ctx.beginPath();
+  ctx.moveTo(48, 48); ctx.lineTo(208, 208);
+  ctx.moveTo(208, 48); ctx.lineTo(48, 208);
+  ctx.stroke();
+  // motors
+  [[48,48],[208,48],[48,208],[208,208]].forEach(([x,y]) => {
+    ctx.beginPath();
+    ctx.arc(x, y, 22, 0, Math.PI * 2);
+    ctx.fillStyle = '#0d121a';
+    ctx.fill();
+    ctx.strokeStyle = '#3d9cf0';
+    ctx.lineWidth = 6;
+    ctx.stroke();
+  });
+  // body
+  ctx.fillStyle = '#3d9cf0';
+  ctx.beginPath();
+  ctx.roundRect(96, 96, 64, 64, 14);
+  ctx.fill();
+  ctx.fillStyle = '#e7ecf3';
+  ctx.font = 'bold 28px system-ui,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('UAV', 128, 128);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 function createDrone() {
   const g = new THREE.Group();
-  const body = new THREE.Mesh(
-    new THREE.BoxGeometry(1.4, 0.35, 2.2),
-    new THREE.MeshStandardMaterial({ color: 0x2a3340, metalness: 0.4, roughness: 0.4 })
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: makeDroneIconTexture(), transparent: true, depthTest: true })
   );
-  g.add(body);
-  const armMat = new THREE.MeshStandardMaterial({ color: 0x3d9cf0, metalness: 0.5, roughness: 0.35 });
-  [[-1.1, 1.1], [1.1, 1.1], [-1.1, -1.1], [1.1, -1.1]].forEach(([x, z]) => {
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.12, 1.6), armMat);
-    arm.position.set(x * 0.55, 0.05, z * 0.55);
-    arm.rotation.y = Math.atan2(z, x);
-    g.add(arm);
-    const motor = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.35, 0.35, 0.2, 16),
-      new THREE.MeshStandardMaterial({ color: 0x111820 })
-    );
-    motor.position.set(x, 0.2, z);
-    g.add(motor);
-  });
-  // forward cue
+  sprite.scale.set(10, 10, 1);
+  sprite.position.y = 2;
+  g.add(sprite);
+  // tiny forward arrow in world (helps see heading)
   const nose = new THREE.Mesh(
-    new THREE.ConeGeometry(0.25, 0.6, 10),
-    new THREE.MeshStandardMaterial({ color: 0x3dd68c })
+    new THREE.ConeGeometry(0.7, 2.2, 10),
+    new THREE.MeshStandardMaterial({ color: 0x3dd68c, emissive: 0x3dd68c, emissiveIntensity: 0.35 })
   );
   nose.rotation.x = Math.PI / 2;
-  nose.position.set(0, 0, 1.3);
+  nose.position.set(0, 0.5, 2.2);
   g.add(nose);
   g.visible = false;
   return g;
@@ -420,30 +454,22 @@ function setFpvHud(on) {
 }
 
 function setFlyButtons(flying) {
-  const label = flying ? '■ 停止飞行' : '▶ 模拟飞行（第一视角）';
-  const fabLabel = flying ? '■ 停止' : '▶ 模拟飞行';
+  const label = flying ? '■ 停止飞行' : '▶ 模拟飞行';
   for (const id of ['flyBtn', 'flyFab']) {
     const el = $(id);
     if (!el) continue;
-    el.textContent = id === 'flyFab' ? fabLabel : label;
+    el.textContent = label;
     el.classList.toggle('flying', flying);
   }
 }
 
-function stopFlight(restoreOrbit = true) {
+function stopFlight() {
   flight.active = false;
   flight.t = 0;
   flight._hold = 0;
   if (droneGroup) droneGroup.visible = false;
   setFpvHud(false);
   controls.enabled = true;
-  if (restoreOrbit && savedOrbit) {
-    camera.position.copy(savedOrbit.pos);
-    controls.target.copy(savedOrbit.target);
-    camera.fov = 50;
-    camera.updateProjectionMatrix();
-    controls.update();
-  }
   setFlyButtons(false);
 }
 
@@ -453,56 +479,43 @@ function startFlight(points) {
     return false;
   }
   const track = buildFlightTrack(points);
-  // ~10s flight, minimum noticeable speed
-  const speed = Math.max(12, track.total / 10);
+  const speed = Math.max(14, track.total / 10);
   flight = { active: true, t: 0, ...track, speed, _hold: 0 };
-  savedOrbit = {
-    pos: camera.position.clone(),
-    target: controls.target.clone(),
-  };
-  controls.enabled = false;
-  camera.fov = 75;
-  camera.near = 0.05;
-  camera.updateProjectionMatrix();
-  if (droneGroup) droneGroup.visible = false;
-  setFpvHud(true);
+  controls.enabled = true; // keep orbit camera
+  setFpvHud(false);
+  if (droneGroup) {
+    droneGroup.visible = true;
+    const here = sampleTrack(flight, 0);
+    droneGroup.position.copy(here.pos);
+    droneGroup.lookAt(here.pos.clone().add(here.dir));
+  }
   setFlyButtons(true);
-  // snap camera to path start immediately so motion is obvious
-  const here = sampleTrack(flight, 0);
-  const ahead = sampleTrack(flight, Math.min(6, flight.total));
-  camera.position.copy(here.pos);
-  camera.up.set(0, 1, 0);
-  camera.lookAt(ahead.pos);
-  setStats('模拟飞行中（第一视角）… 再点按钮可停止', 'ok');
+  setStats('模拟飞行中：无人机图标沿路线移动…', 'ok');
   return true;
 }
 
 function updateFlight(dt) {
-  if (!flight.active) return;
+  if (!flight.active || !droneGroup) return;
   flight.t += dt * flight.speed;
   if (flight.t >= flight.total) {
-    // linger at goal then restore
     const end = sampleTrack(flight, flight.total);
-    camera.position.copy(end.pos);
-    const look = end.pos.clone().add(end.dir);
-    camera.lookAt(look);
+    droneGroup.position.copy(end.pos);
+    droneGroup.lookAt(end.pos.clone().add(end.dir));
     flight.t = flight.total;
-    // auto-exit after brief hold handled by accumulating overshoot
     flight._hold = (flight._hold || 0) + dt;
-    if (flight._hold > 1.2) stopFlight(true);
+    if (flight._hold > 1.0) {
+      stopFlight();
+      setStats('飞行结束。可再次点击「模拟飞行」重播。', 'ok');
+    }
     return;
   }
   flight._hold = 0;
-  const lookAhead = Math.min(flight.t + 4, flight.total);
   const here = sampleTrack(flight, flight.t);
-  const ahead = sampleTrack(flight, lookAhead);
-  camera.position.copy(here.pos);
-  camera.up.set(0, 1, 0);
-  camera.lookAt(ahead.pos);
-
-  const pct = Math.floor((100 * flight.t) / flight.total);
-  const hudMeta = $('fpvMeta');
-  if (hudMeta) hudMeta.textContent = `FPV ${pct}% · ${flight.t.toFixed(0)} / ${flight.total.toFixed(0)} m`;
+  const ahead = sampleTrack(flight, Math.min(flight.t + 3, flight.total));
+  droneGroup.position.copy(here.pos);
+  droneGroup.lookAt(ahead.pos);
+  // slight bob
+  droneGroup.position.y += Math.sin(flight.t * 3.5) * 0.25;
 }
 
 function initScene() {
@@ -558,7 +571,7 @@ function initScene() {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     updateFlight(dt);
-    if (!flight.active) controls.update();
+    controls.update();
     renderer.render(scene, camera);
   })(last);
 }
@@ -576,7 +589,7 @@ async function onPlan() {
   planBtn.disabled = true;
   spinner.classList.add('show');
   setStats('Planning…', '');
-  stopFlight(false);
+  stopFlight();
   try {
     const map = currentMapJson();
     rebuildMapMeshes(map, true);
@@ -608,10 +621,9 @@ async function onPlan() {
         `waypoints: ${result.waypoints}\n` +
         `nodes: ${result.nodes}\n` +
         `time: ${result.time_ms.toFixed(2)} ms\n` +
-        `→ 点击「模拟飞行」或等待自动起飞`,
+        `→ 点「模拟飞行」让无人机图标沿路线飞`,
       'ok'
     );
-    startFlight(lastPath);
   } catch (e) {
     console.error(e);
     setStats(`Error: ${e.message || e}`, 'err');
@@ -623,7 +635,7 @@ async function onPlan() {
 
 function onReset() {
   if (!baseMap) return;
-  stopFlight(true);
+  stopFlight();
   fillStartGoal(baseMap);
   $('algo').value = 'astar';
   $('informed').checked = true;
@@ -635,7 +647,7 @@ function onReset() {
 
 async function onFlyToggle() {
   if (flight.active) {
-    stopFlight(true);
+    stopFlight();
     setStats('已停止模拟飞行', '');
     return;
   }

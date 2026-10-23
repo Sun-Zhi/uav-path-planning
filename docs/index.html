@@ -233,7 +233,7 @@
         <button id="planBtn" type="button">Plan / 规划</button>
         <button id="resetBtn" type="button">Reset</button>
       </div>
-      <button id="flyBtn" type="button" class="fly-primary">▶ 模拟飞行（第一视角）</button>
+      <button id="flyBtn" type="button" class="fly-primary">▶ 模拟飞行</button>
 
       <div id="stats">Load map, then Plan.</div>
 
@@ -244,7 +244,7 @@
         <div><span class="swatch" style="background:#ffb347"></span>CN JY-27 类雷达图标 + 覆盖扇面（教学）</div>
         <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
         <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
-        Plan 后自动 FPV 飞行 · Drag to orbit · scroll to zoom
+        规划后点「模拟飞行」· Drag to orbit · scroll to zoom
       </div>
       <p class="disclaimer">Teaching approximations inspired by open SPY-6 (S-band) / JY-27 (VHF) literature; <strong>not</strong> real system parameters. Ranges are lab-scaled to the 100&nbsp;m map. 教学近似，非实装参数；作用距离已缩放到演示地图。</p>
     </aside>
@@ -253,7 +253,7 @@
       <div id="spinner">Planning…</div>
       <button id="flyFab" type="button">▶ 模拟飞行</button>
       <div id="fpvHud">
-        <div id="fpvTitle">UAV FPV · 无人机第一视角</div>
+        <div id="fpvTitle">模拟飞行</div>
         <div class="cross"></div>
         <div id="fpvMeta">FPV</div>
       </div>
@@ -269,6 +269,6 @@
   }
   </script>
   <script src="./planner.js"></script>
-  <script type="module" src="./app.js?v=fly5"></script>
+  <script type="module" src="./app.js?v=iconfly6"></script>
 </body>
 </html>
