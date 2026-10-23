@@ -119,6 +119,39 @@
       z-index: 3;
     }
     #spinner.show { display: flex; }
+    #fpvHud {
+      display: none;
+      position: absolute; inset: 0;
+      pointer-events: none;
+      z-index: 4;
+      border: 2px solid rgba(61,156,240,0.35);
+      box-shadow: inset 0 0 80px rgba(0,0,0,0.35);
+    }
+    #fpvHud.show { display: block; }
+    #fpvHud .cross {
+      position: absolute; left: 50%; top: 50%;
+      width: 28px; height: 28px; margin: -14px 0 0 -14px;
+      border: 2px solid rgba(61,220,180,0.85);
+      border-radius: 50%;
+    }
+    #fpvHud .cross::before, #fpvHud .cross::after {
+      content: ""; position: absolute; background: rgba(61,220,180,0.85);
+    }
+    #fpvHud .cross::before { left: 50%; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; }
+    #fpvHud .cross::after { top: 50%; left: 4px; right: 4px; height: 2px; margin-top: -1px; }
+    #fpvMeta {
+      position: absolute; left: 16px; bottom: 16px;
+      font: 600 13px/1.3 ui-monospace, monospace;
+      color: #9fe7c8;
+      text-shadow: 0 1px 4px #000;
+      background: rgba(8,12,20,0.55);
+      padding: 6px 10px; border-radius: 6px;
+    }
+    #fpvTitle {
+      position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+      font: 650 13px system-ui,sans-serif; color: #cfe8ff;
+      background: rgba(8,12,20,0.55); padding: 6px 12px; border-radius: 6px;
+    }
     .disclaimer {
       margin-top: 12px;
       font-size: 0.68rem;
@@ -164,23 +197,31 @@
         <button id="planBtn" type="button">Plan / 规划</button>
         <button id="resetBtn" type="button">Reset</button>
       </div>
+      <div class="btns" style="margin-top:8px">
+        <button id="flyBtn" type="button" style="background:#2a3a4f;color:#e7ecf3">Fly FPV / 第一视角</button>
+      </div>
 
       <div id="stats">Load map, then Plan.</div>
 
       <div class="legend">
         <div><span class="swatch" style="background:#8a93a3"></span>Building / 楼宇</div>
         <div><span class="swatch" style="background:#e07040"></span>EW AABB risk / 软风险区</div>
-        <div><span class="swatch" style="background:#4aa3ff"></span>蓝塔+扇面 = US SPY-6 类雷达（教学）</div>
-        <div><span class="swatch" style="background:#ffb347"></span>橙塔+扇面 = CN JY-27 类雷达（教学）</div>
+        <div><span class="swatch" style="background:#4aa3ff"></span>US SPY-6 类雷达图标 + 覆盖扇面（教学）</div>
+        <div><span class="swatch" style="background:#ffb347"></span>CN JY-27 类雷达图标 + 覆盖扇面（教学）</div>
         <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
         <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
-        Drag to orbit · scroll to zoom
+        Plan 后自动 FPV 飞行 · Drag to orbit · scroll to zoom
       </div>
       <p class="disclaimer">Teaching approximations inspired by open SPY-6 (S-band) / JY-27 (VHF) literature; <strong>not</strong> real system parameters. Ranges are lab-scaled to the 100&nbsp;m map. 教学近似，非实装参数；作用距离已缩放到演示地图。</p>
     </aside>
     <main id="view">
       <div id="canvas-host"></div>
       <div id="spinner">Planning…</div>
+      <div id="fpvHud">
+        <div id="fpvTitle">UAV FPV · 无人机第一视角</div>
+        <div class="cross"></div>
+        <div id="fpvMeta">FPV</div>
+      </div>
     </main>
   </div>
 
@@ -193,6 +234,6 @@
   }
   </script>
   <script src="./planner.js"></script>
-  <script type="module" src="./app.js?v=radar2"></script>
+  <script type="module" src="./app.js?v=fpv3"></script>
 </body>
 </html>
