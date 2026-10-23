@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>UAV Path Planning Demo / 无人机航迹规划演示</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --panel: #1a2332;
+      --border: #2d3a4f;
+      --text: #e7ecf3;
+      --muted: #9aa8bc;
+      --accent: #3d9cf0;
+      --ok: #3dd68c;
+      --warn: #f0b429;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; height: 100%;
+      background: var(--bg); color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif;
+      overflow: hidden;
+    }
+    #app { display: flex; height: 100%; }
+    #sidebar {
+      width: 300px; min-width: 260px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 16px 14px;
+      overflow-y: auto;
+      z-index: 2;
+    }
+    #sidebar h1 {
+      font-size: 1.05rem; margin: 0 0 4px; font-weight: 650;
+    }
+    #sidebar .sub {
+      color: var(--muted); font-size: 0.78rem; margin-bottom: 14px; line-height: 1.35;
+    }
+    label {
+      display: block; font-size: 0.75rem; color: var(--muted);
+      margin: 10px 0 4px;
+    }
+    select, input[type="number"] {
+      width: 100%;
+      background: #0d121a;
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 7px 8px;
+      font-size: 0.9rem;
+    }
+    .row3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px;
+    }
+    .check {
+      display: flex; align-items: center; gap: 8px;
+      margin-top: 10px; font-size: 0.85rem; color: var(--text);
+    }
+    .check input { width: auto; }
+    .btns {
+      display: flex; gap: 8px; margin-top: 14px;
+    }
+    button {
+      flex: 1;
+      border: none;
+      border-radius: 7px;
+      padding: 9px 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-size: 0.88rem;
+    }
+    button#planBtn {
+      background: var(--accent); color: #041018;
+    }
+    button#planBtn:disabled {
+      opacity: 0.55; cursor: wait;
+    }
+    button#resetBtn {
+      background: #243044; color: var(--text);
+      border: 1px solid var(--border);
+    }
+    #stats {
+      margin-top: 14px;
+      padding: 10px;
+      background: #0d121a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 0.8rem;
+      line-height: 1.45;
+      color: var(--muted);
+      white-space: pre-wrap;
+      min-height: 88px;
+    }
+    #stats.ok { color: var(--ok); }
+    #stats.err { color: #ff7b72; }
+    .legend {
+      margin-top: 14px;
+      font-size: 0.72rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .swatch {
+      display: inline-block; width: 10px; height: 10px;
+      border-radius: 2px; margin-right: 4px; vertical-align: middle;
+    }
+    #view {
+      flex: 1; position: relative; background: #080b10;
+    }
+    #canvas-host { width: 100%; height: 100%; }
+    #spinner {
+      display: none;
+      position: absolute; inset: 0;
+      align-items: center; justify-content: center;
+      background: rgba(8,11,16,0.45);
+      color: var(--text); font-size: 0.95rem;
+      z-index: 3;
+    }
+    #spinner.show { display: flex; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <h1>UAV Path Planning</h1>
+      <div class="sub">3D A* / Informed RRT* · WASM 浏览器演示<br/>Buildings + EW risk zones</div>
+
+      <label for="algo">Algorithm / 算法</label>
+      <select id="algo">
+        <option value="astar">A* (grid)</option>
+        <option value="rrtstar">RRT*</option>
+      </select>
+
+      <label class="check">
+        <input type="checkbox" id="informed" checked />
+        Informed sampling (RRT*)
+      </label>
+
+      <label>Start / 起点 (x, y, z)</label>
+      <div class="row3">
+        <input type="number" id="sx" step="1" />
+        <input type="number" id="sy" step="1" />
+        <input type="number" id="sz" step="1" />
+      </div>
+
+      <label>Goal / 终点 (x, y, z)</label>
+      <div class="row3">
+        <input type="number" id="gx" step="1" />
+        <input type="number" id="gy" step="1" />
+        <input type="number" id="gz" step="1" />
+      </div>
+
+      <div class="btns">
+        <button id="planBtn" type="button">Plan / 规划</button>
+        <button id="resetBtn" type="button">Reset</button>
+      </div>
+
+      <div id="stats">Load map, then Plan.</div>
+
+      <div class="legend">
+        <div><span class="swatch" style="background:#8a93a3"></span>Building / 楼宇</div>
+        <div><span class="swatch" style="background:#e07040"></span>Risk zone / 风险区</div>
+        <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
+        <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
+        Drag to orbit · scroll to zoom
+      </div>
+    </aside>
+    <main id="view">
+      <div id="canvas-host"></div>
+      <div id="spinner">Planning…</div>
+    </main>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="./planner.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

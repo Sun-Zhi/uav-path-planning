@@ -1,0 +1,51 @@
+{
+  "comment": "Simplified urban canyon: AABB buildings + radar/EW soft risk zones",
+  "resolution": 2.0,
+  "bounds": {
+    "min": {"x": 0, "y": 0, "z": 0},
+    "max": {"x": 100, "y": 100, "z": 40}
+  },
+  "start": {"x": 5, "y": 5, "z": 12},
+  "goal":  {"x": 95, "y": 95, "z": 12},
+  "buildings": [
+    {
+      "name": "tower_A",
+      "min": {"x": 20, "y": 20, "z": 0},
+      "max": {"x": 35, "y": 40, "z": 35}
+    },
+    {
+      "name": "tower_B",
+      "min": {"x": 45, "y": 10, "z": 0},
+      "max": {"x": 60, "y": 30, "z": 28}
+    },
+    {
+      "name": "tower_C",
+      "min": {"x": 30, "y": 50, "z": 0},
+      "max": {"x": 50, "y": 70, "z": 32}
+    },
+    {
+      "name": "tower_D",
+      "min": {"x": 65, "y": 45, "z": 0},
+      "max": {"x": 80, "y": 75, "z": 36}
+    },
+    {
+      "name": "low_block_E",
+      "min": {"x": 10, "y": 70, "z": 0},
+      "max": {"x": 25, "y": 90, "z": 18}
+    }
+  ],
+  "risk_zones": [
+    {
+      "name": "radar_coverage_SW",
+      "min": {"x": 5, "y": 35, "z": 0},
+      "max": {"x": 28, "y": 55, "z": 25},
+      "risk_multiplier": 6.0
+    },
+    {
+      "name": "ew_jammer_corridor",
+      "min": {"x": 55, "y": 55, "z": 5},
+      "max": {"x": 75, "y": 85, "z": 30},
+      "risk_multiplier": 8.0
+    }
+  ]
+}
