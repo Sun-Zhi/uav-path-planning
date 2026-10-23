@@ -194,8 +194,16 @@
     });
   }
 
+  function removePathEntity() {
+    if (pathEntity) viewer.entities.remove(pathEntity);
+    const byId = viewer.entities.getById('uav-path');
+    if (byId) viewer.entities.remove(byId);
+    pathEntity = null;
+  }
+
   function clearMapEntities() {
-    const keep = new Set(['uav-drone', 'uav-path']);
+    removePathEntity();
+    const keep = new Set(['uav-drone']);
     const toRemove = [];
     viewer.entities.values.forEach((e) => {
       if (!keep.has(e.id)) toRemove.push(e);
@@ -294,10 +302,7 @@
       },
     });
 
-    if (pathEntity) {
-      // path entity removed by clearMapEntities if id matched — recreate after plan
-      pathEntity = null;
-    }
+    removePathEntity();
 
     if (!keepCamera) flyCameraTo(map);
   }
@@ -320,10 +325,7 @@
   }
 
   function drawPath(points, algo) {
-    if (pathEntity) {
-      viewer.entities.remove(pathEntity);
-      pathEntity = null;
-    }
+    removePathEntity();
     if (!points || points.length < 2) return;
 
     const flat = [];
@@ -543,6 +545,7 @@
     $('radarCn').checked = true;
     lastPath = [];
     lastAlgo = 'astar';
+    removePathEntity();
     rebuildCesiumScene(baseMap, false);
     drawPath([], 'astar');
     setStats('Reset to Guomao sample. Click Plan.', '');
