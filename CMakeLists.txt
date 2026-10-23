@@ -23,3 +23,7 @@ add_custom_command(TARGET uav_planner POST_BUILD
 enable_testing()
 add_test(NAME demo COMMAND uav_planner --demo
          WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(uav_test_geo tests/test_geo.cpp)
+target_include_directories(uav_test_geo PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME geo COMMAND uav_test_geo)
