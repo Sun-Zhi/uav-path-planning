@@ -14,6 +14,7 @@ C++17 demo: **risk-aware 3D A\*** + **RRT\*** (optional Informed sampling) for u
 | A\* 26 邻域 | 栅格搜索，边代价 = 距离 × 风险倍率 | Hart et al. 1968; Zammit AIAA 2018 |
 | RRT\* | 连续空间采样 + ChooseParent/Rewire | Karaman & Frazzoli, IJRR 2011 |
 | Informed 采样 | 首解后在椭球内采样（可关） | Gammell et al., ICRA 2014 / TRO 2018 |
+| SNR→Pd 雷达 | 雷达方程 + 波束增益 → 检测概率，边代价 ×(1+w·Pd) | Atayev 2024; Alpdemir 2022；公开 SPY-6 / JY-27 文献（教学近似） |
 
 详细论文短名单见 [PAPERS.md](PAPERS.md)。
 
@@ -41,6 +42,7 @@ uav-path-planning/
 ├── include/uav/
 │   ├── vec3.hpp
 │   ├── aabb.hpp
+│   ├── radar.hpp
 │   ├── environment.hpp
 │   ├── astar3d.hpp
 │   └── rrt_star.hpp
@@ -73,7 +75,24 @@ ctest --test-dir build --output-on-failure
 
 - `buildings`: 硬障碍 AABB（不可穿越）
 - `risk_zones`: 软风险区，`risk_multiplier` 放大穿越代价（可穿越但昂贵）
+- `radars`: SNR→Pd 教学雷达（见下节）
+- `uav_rcs` / `pd_cost_weight`: 默认 RCS 与 Pd 代价权重
 - `resolution`: A\* 栅格边长（米）
+
+### 雷达 SNR→Pd 模型（教学近似）
+
+紧凑雷达方程：`SNR = K · σ / R⁴ · G_beam`，其中 `K` 由 `snr_ref_linear` 在 `r_ref_m` / `sigma_ref_m2` 标定；`G_beam` 为方位/俯仰半功率波束宽上的高斯衰落（后瓣与超距为 0）。检测概率用 logistic 门限映射 SNR_dB → Pd。边代价：
+
+`dist × AABB_risk × (1 + pd_cost_weight × max_Pd_on_segment)`
+
+样例地图含两部**实验室缩距**剖面（非实装参数）：
+
+| id | 灵感（公开文献） | 波段标签 | 特点 |
+|----|------------------|----------|------|
+| `us_spy6_class` | AN/SPY-6 S-band AESA | S | 较窄波束、较高 snr_ref |
+| `cn_jy27_class` | JY-27 VHF 预警 | VHF | 更宽波束；`rcs_lo_factor=4` 定性体现米波对隐身不敏感 |
+
+真实系统作用距离为数百公里量级；demo 将 `max_range_m` 缩放到 100 m 地图内。UI 与 README 均标注 **teaching / scaled / 非实装**。
 
 ---
 
@@ -97,7 +116,7 @@ python3 -m http.server 8080
 ./web/build.sh
 ```
 
-页面用 Three.js 显示样例楼宇与风险区，并在浏览器内调用 WASM 版 A\* / RRT\*（可改起点终点）。
+页面用 Three.js 显示样例楼宇、EW 风险区与雷达扇区，并在浏览器内调用 WASM 版 A\* / RRT\*（可改起点终点；统计含 mean_pd / max_pd）。
 
 ---
 
@@ -114,7 +133,7 @@ python3 -m http.server 8080
 
 ## English (short)
 
-Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser WASM demo: https://sun-zhi.github.io/uav-path-planning/ (rebuild with `./web/build.sh`). Implements risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed ellipsoid sampling) on AABB buildings + soft EW/radar zones. See `PAPERS.md` for citations. No ROS. Exit 0 on success.
+Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser WASM demo: https://sun-zhi.github.io/uav-path-planning/ (rebuild with `./web/build.sh`). Implements risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed ellipsoid sampling) on AABB buildings + soft EW zones + teaching SNR→Pd radars (SPY-6 / JY-27–class, lab-scaled). See `PAPERS.md` for citations. No ROS. Exit 0 on success.
 
 ---
 

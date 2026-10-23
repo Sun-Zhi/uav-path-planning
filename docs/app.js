@@ -69,12 +69,87 @@ function marker(pos, color) {
   return m;
 }
 
+/** Horizontal sector wedge: yaw 0=+X, 90=+Y in map coords. */
+function radarWedge(radar) {
+  const group = new THREE.Group();
+  const isUs = (radar.id || '').includes('us_') || (radar.band || '').startsWith('S');
+  const color = isUs ? 0x4090f0 : 0xf0a040;
+
+  const r = radar.max_range_m || 50;
+  const halfAz = ((radar.az_hpbw_deg || 20) * Math.PI) / 360;
+  const yaw = ((radar.yaw_deg || 0) * Math.PI) / 180;
+  const pitch = ((radar.pitch_deg || 0) * Math.PI) / 180;
+  const cx = radar.position.x;
+  const cy = radar.position.y;
+  const cz = radar.position.z;
+  const segments = 28;
+  const positions = [];
+  for (let i = 0; i < segments; i++) {
+    const a0 = yaw - halfAz + (2 * halfAz * i) / segments;
+    const a1 = yaw - halfAz + (2 * halfAz * (i + 1)) / segments;
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+    const p0x = cx + r * Math.cos(a0) * cp;
+    const p0y = cy + r * Math.sin(a0) * cp;
+    const p0z = cz + r * sp;
+    const p1x = cx + r * Math.cos(a1) * cp;
+    const p1y = cy + r * Math.sin(a1) * cp;
+    const p1z = cz + r * sp;
+    // map (x,y,z) → three (x,z,y)
+    positions.push(cx, cz, cy, p0x, p0z, p0y, p1x, p1z, p1y);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.computeVertexNormals();
+  const mat = new THREE.MeshBasicMaterial({
+    color,
+    transparent: true,
+    opacity: 0.22,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
+  group.add(new THREE.Mesh(geo, mat));
+
+  // Outline arc
+  const arcPts = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = yaw - halfAz + (2 * halfAz * i) / segments;
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+    const px = cx + r * Math.cos(a) * cp;
+    const py = cy + r * Math.sin(a) * cp;
+    const pz = cz + r * sp;
+    arcPts.push(new THREE.Vector3(px, pz, py));
+  }
+  arcPts.unshift(new THREE.Vector3(cx, cz, cy));
+  arcPts.push(new THREE.Vector3(cx, cz, cy));
+  const lineGeo = new THREE.BufferGeometry().setFromPoints(arcPts);
+  const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.65 });
+  group.add(new THREE.Line(lineGeo, lineMat));
+
+  // Site marker
+  const site = new THREE.Mesh(
+    new THREE.SphereGeometry(1.2, 16, 12),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
+  );
+  site.position.set(cx, cz, cy);
+  group.add(site);
+
+  return group;
+}
+
 function clearGroup(g) {
   if (!g) return;
   while (g.children.length) {
     const c = g.children.pop();
+    if (c.isGroup) {
+      clearGroup(c);
+    }
     if (c.geometry) c.geometry.dispose();
-    if (c.material) c.material.dispose();
+    if (c.material) {
+      if (Array.isArray(c.material)) c.material.forEach((m) => m.dispose());
+      else c.material.dispose();
+    }
   }
 }
 
@@ -86,6 +161,9 @@ function rebuildMapMeshes(map) {
   }
   for (const z of map.risk_zones || []) {
     mapGroup.add(aabbMesh(z, 0xe07040, 0.28));
+  }
+  for (const r of map.radars || []) {
+    mapGroup.add(radarWedge(r));
   }
   markersGroup.add(marker(map.start, 0x3dd68c));
   markersGroup.add(marker(map.goal, 0xe040a0));
@@ -204,10 +282,13 @@ async function onPlan() {
       return;
     }
     drawPath(result.path, algo);
+    const meanPd = result.mean_pd ?? 0;
+    const maxPd = result.max_pd ?? 0;
     setStats(
       `OK · ${algo}${algo === 'rrtstar' && informed ? ' (informed)' : ''}\n` +
         `length: ${result.path_length.toFixed(2)} m\n` +
         `cost: ${result.path_cost.toFixed(2)}\n` +
+        `mean_pd: ${meanPd.toFixed(3)}  max_pd: ${maxPd.toFixed(3)}\n` +
         `waypoints: ${result.waypoints}\n` +
         `nodes: ${result.nodes}\n` +
         `time: ${result.time_ms.toFixed(2)} ms`,
@@ -240,10 +321,10 @@ async function main() {
   baseMap = await res.json();
   fillStartGoal(baseMap);
   rebuildMapMeshes(baseMap);
-  setStats('Ready. Click Plan / 点击规划.', '');
+  const nRad = (baseMap.radars || []).length;
+  setStats(`Ready (${nRad} radars). Click Plan / 点击规划.`, '');
   planBtn.addEventListener('click', onPlan);
   $('resetBtn').addEventListener('click', onReset);
-  // Warm-load WASM in background
   ensurePlanner().catch((e) => console.warn('WASM preload:', e));
 }
 

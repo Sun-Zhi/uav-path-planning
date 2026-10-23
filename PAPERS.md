@@ -75,14 +75,14 @@
 - **作者**: Anvarbek Atayev, Jörg Fliege, Alain Zemkoho  
 - **年份 / 期刊**: 2024, *Optimization and Engineering*  
 - **核心观点**: 从电磁频谱检测原理建模被探测概率；目标可最小化探测概率或最大化敌方定位误差，并可纳入我方干扰（jamming）。  
-- **对本项目的意义**: 我们将雷达/电子干扰区抽象为 **软障碍风险场**（进入该 AABB 区域边代价 × `risk_multiplier`），在 A* 与 RRT* 代价中一致体现。
+- **对本项目的意义**: 早期原型用 AABB 软风险区；现已叠加 **SNR→Pd** 雷达方程代价（见下节「教学雷达剖面」），在 A* 与 RRT* 边代价中一致体现。
 
 ### 10. 雷达威胁下的战术 UAV 路径 — Alpdemir (2022)
 - **标题**: Tactical UAV path optimization under radar threat using deep reinforcement learning  
 - **作者**: M. Nedim Alpdemir  
 - **年份 / 期刊**: 2022, *Neural Computing and Applications*  
 - **核心观点**: 雷达探测与 RCS、交会几何相关；威胁区在一定条件下可穿透，适合用概率代价而非纯二值障碍。  
-- **对本项目的意义**: 印证「风险区可穿越但昂贵」的建模；本原型用固定 `risk_cost`，不做 RL。
+- **对本项目的意义**: 印证「威胁区可穿越但昂贵」的建模；本原型用 SNR→Pd 连续代价 + 可选 AABB `risk_multiplier`，不做 RL。
 
 ### 11. GPS/通信拒止多机规划 — (Sensors / PMC, 2023)
 - **标题**: Multi-UAV Path Planning in GPS and Communication Denial Environment  
@@ -96,17 +96,30 @@
 
 ---
 
+
+### 教学雷达剖面（公开文献灵感，非实装）
+
+Demo 中的 `us_spy6_class` / `cn_jy27_class` **仅用于教学**：参数为抽象 `snr_ref` + 实验室缩距，**不是**真实 ERP / 噪声系数 / 波形。
+
+- **AN/SPY-6（公开）**: S-band AESA 舰载防空雷达家族（Raytheon / 美军公开材料与 Wikipedia 综述）。Demo 用窄方位/俯仰 HPBW + 较高 `snr_ref` 作定性对照。
+- **JY-27 / JY-27A（公开）**: 中国 VHF 远程预警雷达；公开资料常给出约 **240–390 MHz** 波段与约 **390–500 km** 仪表作用距离量级（如 radartutorial.eu / ODIN 等开源综述）。Demo **不使用**该公里级距离，仅保留「更宽波束 + `rcs_lo_factor>1`（米波对低可观测 RCS 不敏感的定性）」并缩放到 100 m 地图。
+
+**免责声明**: 本仓库不包含、不推断任何保密参数；数值仅保证 demo 中 Pd 在波束内中距偏高、波束外偏低。
+
+---
 ## 四、本仓库具体实现了什么
 
 | 模块 | 文件 | 灵感来源 |
 |------|------|----------|
 | 3D AABB 环境 + 风险区 | `include/uav/environment.hpp` | Liu SFC / Bertram 城市场景；Atayev 电磁风险 |
+| SNR→Pd 雷达模型 | `include/uav/radar.hpp` | 雷达方程教学近似；SPY-6 / JY-27 公开文献灵感 |
 | 风险感知 26 邻域 A* | `include/uav/astar3d.hpp` | Hart A*；Zammit 对比；Alpdemir 软威胁 |
 | 连续 3D RRT* | `include/uav/rrt_star.hpp` | Karaman & Frazzoli；Informed 注释对齐 Gammell |
-| 地图 JSON | `configs/sample_map.json` | 简化城市楼宇 + 雷达风险球/盒 |
-| CLI / demo | `src/main.cpp` | Zammit 式双算法对照输出 |
+| 地图 JSON | `configs/sample_map.json` | 城市楼宇 + EW AABB + 两部教学雷达 |
+| CLI / demo | `src/main.cpp` | Zammit 式双算法对照 + mean/max Pd |
+| WASM / Pages | `docs/` + `web/` | 浏览器内规划与雷达扇区可视化 |
 
-**未实现（有意控制范围）**: 完整 Hybrid A*、BIT*、SFC+QP、动力学约束、真实雷达 RCS 模型、ROS。
+**未实现（有意控制范围）**: 完整 Hybrid A*、BIT*、SFC+QP、动力学约束、多径/地形遮蔽精细化、真实/保密雷达参数、ROS。
 
 ---
 

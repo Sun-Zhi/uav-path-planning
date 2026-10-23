@@ -1,10 +1,11 @@
 #pragma once
 /**
- * 3D environment: hard AABB buildings + soft radar/EW risk zones.
+ * 3D environment: hard AABB buildings + soft radar/EW risk zones + SNR→Pd radars.
  * Inspired by urban UAS scenes (Bertram et al., T-ITS 2023) and
  * electromagnetic / radar risk modeling (Atayev et al. 2024; Alpdemir 2022).
  */
 #include "uav/aabb.hpp"
+#include "uav/radar.hpp"
 #include "uav/vec3.hpp"
 #include <algorithm>
 #include <fstream>
@@ -26,6 +27,9 @@ struct MapConfig {
   Vec3 goal{95, 95, 10};
   std::vector<AABB> buildings;
   std::vector<AABB> risk_zones;
+  std::vector<RadarSite> radars;
+  double uav_rcs{0.1};
+  double pd_cost_weight{25.0};
   double resolution{2.0};  // grid cell size for A*
 };
 
@@ -56,7 +60,7 @@ class Environment {
     return false;
   }
 
-  /** Multiplicative risk factor along segment (>=1). Soft zones only. */
+  /** Multiplicative risk factor along segment (>=1). Soft AABB zones only. */
   double segment_risk_factor(const Vec3& a, const Vec3& b) const {
     double factor = 1.0;
     for (const auto& z : cfg_.risk_zones) {
@@ -67,9 +71,12 @@ class Environment {
     return factor;
   }
 
-  /** Edge cost = Euclidean length * risk (risk-aware planning). */
+  /** Edge cost = dist * AABB risk * (1 + w * max Pd on segment). */
   double edge_cost(const Vec3& a, const Vec3& b) const {
-    return Vec3::dist(a, b) * segment_risk_factor(a, b);
+    const double pd =
+        max_pd_on_segment(cfg_.radars, a, b, cfg_.uav_rcs, /*samples=*/8);
+    return Vec3::dist(a, b) * segment_risk_factor(a, b) *
+           (1.0 + cfg_.pd_cost_weight * pd);
   }
 
   bool is_free(const Vec3& p) const { return in_bounds(p) && !collides_hard(p); }
@@ -85,14 +92,16 @@ inline std::string extract_string(const std::string& s, const std::string& key) 
   if (pos == std::string::npos) return {};
   pos = s.find(':', pos);
   pos = s.find('"', pos);
+  if (pos == std::string::npos) return {};
   auto end = s.find('"', pos + 1);
+  if (end == std::string::npos) return {};
   return s.substr(pos + 1, end - pos - 1);
 }
 
 inline double extract_number_after(const std::string& s, size_t from,
                                    const std::string& key, double def = 0) {
   auto pos = s.find("\"" + key + "\"", from);
-  if (pos == std::string::npos || pos > from + 500) return def;
+  if (pos == std::string::npos || pos > from + 800) return def;
   pos = s.find(':', pos);
   size_t i = pos + 1;
   while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) ++i;
@@ -128,6 +137,22 @@ inline std::vector<std::string> split_objects(const std::string& arr) {
   return out;
 }
 
+/** Find matching closing bracket for `[` or `{` at open_pos. */
+inline size_t matching_bracket(const std::string& s, size_t open_pos) {
+  if (open_pos >= s.size()) return std::string::npos;
+  const char open = s[open_pos];
+  const char close = (open == '[') ? ']' : '}';
+  int depth = 0;
+  for (size_t i = open_pos; i < s.size(); ++i) {
+    if (s[i] == open) ++depth;
+    else if (s[i] == close) {
+      --depth;
+      if (depth == 0) return i;
+    }
+  }
+  return std::string::npos;
+}
+
 inline MapConfig load_map_json_string(const std::string& s) {
   MapConfig cfg;
   auto bounds_pos = s.find("\"bounds\"");
@@ -152,12 +177,15 @@ inline MapConfig load_map_json_string(const std::string& s) {
   }
 
   cfg.resolution = extract_number_after(s, 0, "resolution", 2.0);
+  cfg.uav_rcs = extract_number_after(s, 0, "uav_rcs", 0.1);
+  cfg.pd_cost_weight = extract_number_after(s, 0, "pd_cost_weight", 25.0);
 
   auto parse_aabb_list = [&](const std::string& key, bool hard) {
     auto kpos = s.find("\"" + key + "\"");
     if (kpos == std::string::npos) return;
     auto abracket = s.find('[', kpos);
-    auto ebracket = s.find(']', abracket);
+    auto ebracket = matching_bracket(s, abracket);
+    if (ebracket == std::string::npos) return;
     for (const auto& obj : split_objects(s.substr(abracket, ebracket - abracket + 1))) {
       AABB box;
       box.name = extract_string(obj, "name");
@@ -179,6 +207,38 @@ inline MapConfig load_map_json_string(const std::string& s) {
 
   parse_aabb_list("buildings", true);
   parse_aabb_list("risk_zones", false);
+
+  auto rpos = s.find("\"radars\"");
+  if (rpos != std::string::npos) {
+    auto abracket = s.find('[', rpos);
+    auto ebracket = matching_bracket(s, abracket);
+    if (ebracket != std::string::npos) {
+      for (const auto& obj :
+           split_objects(s.substr(abracket, ebracket - abracket + 1))) {
+        RadarSite r;
+        r.id = extract_string(obj, "id");
+        r.label = extract_string(obj, "label");
+        r.band = extract_string(obj, "band");
+        auto ppos = obj.find("\"position\"");
+        if (ppos != std::string::npos) {
+          auto pend = obj.find('}', ppos);
+          r.position = parse_vec3_block(obj.substr(ppos, pend - ppos + 1));
+        }
+        r.yaw_deg = extract_number_after(obj, 0, "yaw_deg", 0);
+        r.pitch_deg = extract_number_after(obj, 0, "pitch_deg", 0);
+        r.az_hpbw_deg = extract_number_after(obj, 0, "az_hpbw_deg", 20);
+        r.el_hpbw_deg = extract_number_after(obj, 0, "el_hpbw_deg", 15);
+        r.max_range_m = extract_number_after(obj, 0, "max_range_m", 50);
+        r.snr_ref_linear = extract_number_after(obj, 0, "snr_ref_linear", 100);
+        r.r_ref_m = extract_number_after(obj, 0, "r_ref_m", 25);
+        r.sigma_ref_m2 = extract_number_after(obj, 0, "sigma_ref_m2", 0.1);
+        r.snr_thresh_db = extract_number_after(obj, 0, "snr_thresh_db", 10);
+        r.rcs_lo_factor = extract_number_after(obj, 0, "rcs_lo_factor", 1.0);
+        cfg.radars.push_back(std::move(r));
+      }
+    }
+  }
+
   return cfg;
 }
 

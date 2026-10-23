@@ -119,13 +119,21 @@
       z-index: 3;
     }
     #spinner.show { display: flex; }
+    .disclaimer {
+      margin-top: 12px;
+      font-size: 0.68rem;
+      color: #7a8799;
+      line-height: 1.4;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+    }
   </style>
 </head>
 <body>
   <div id="app">
     <aside id="sidebar">
       <h1>UAV Path Planning</h1>
-      <div class="sub">3D A* / Informed RRT* · WASM 浏览器演示<br/>Buildings + EW risk zones</div>
+      <div class="sub">3D A* / Informed RRT* · WASM · SNR→Pd 雷达规避<br/>Buildings + teaching SPY-6 / JY-27–class radars</div>
 
       <label for="algo">Algorithm / 算法</label>
       <select id="algo">
@@ -161,11 +169,14 @@
 
       <div class="legend">
         <div><span class="swatch" style="background:#8a93a3"></span>Building / 楼宇</div>
-        <div><span class="swatch" style="background:#e07040"></span>Risk zone / 风险区</div>
+        <div><span class="swatch" style="background:#e07040"></span>EW AABB risk / 软风险区</div>
+        <div><span class="swatch" style="background:#4090f0"></span>US SPY-6–class (teaching, scaled)</div>
+        <div><span class="swatch" style="background:#f0a040"></span>CN JY-27–class (teaching, scaled)</div>
         <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
         <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
         Drag to orbit · scroll to zoom
       </div>
+      <p class="disclaimer">Teaching approximations inspired by open SPY-6 (S-band) / JY-27 (VHF) literature; <strong>not</strong> real system parameters. Ranges are lab-scaled to the 100&nbsp;m map. 教学近似，非实装参数；作用距离已缩放到演示地图。</p>
     </aside>
     <main id="view">
       <div id="canvas-host"></div>

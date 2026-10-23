@@ -1,5 +1,6 @@
 #include <emscripten/bind.h>
 #include "uav/astar3d.hpp"
+#include "uav/radar.hpp"
 #include "uav/rrt_star.hpp"
 #include <cmath>
 #include <sstream>
@@ -7,7 +8,8 @@
 
 namespace {
 
-std::string serialize_result(const uav::PlannerStats& st) {
+std::string serialize_result(const uav::PlannerStats& st, double mean_pd,
+                             double max_pd) {
   std::ostringstream out;
   out.setf(std::ios::fixed);
   out.precision(4);
@@ -18,6 +20,8 @@ std::string serialize_result(const uav::PlannerStats& st) {
       << "\"waypoints\":" << st.path_waypoints << ","
       << "\"nodes\":" << st.nodes_expanded << ","
       << "\"time_ms\":" << st.time_ms << ","
+      << "\"mean_pd\":" << mean_pd << ","
+      << "\"max_pd\":" << max_pd << ","
       << "\"path\":[";
   for (size_t i = 0; i < st.path.size(); ++i) {
     const auto& p = st.path[i];
@@ -44,11 +48,14 @@ std::string plan(std::string map_json, std::string algo, bool informed) {
       uav::AStar3D astar(env);
       st = astar.plan(cfg.start, cfg.goal);
     }
-    return serialize_result(st);
+    double mean_pd = 0, max_pd = 0;
+    uav::path_pd_stats(cfg.radars, st.path, cfg.uav_rcs, mean_pd, max_pd);
+    return serialize_result(st, mean_pd, max_pd);
   } catch (const std::exception& e) {
     std::ostringstream out;
     out << "{\"success\":false,\"path_length\":0,\"path_cost\":0,"
-        << "\"waypoints\":0,\"nodes\":0,\"time_ms\":0,\"path\":[],"
+        << "\"waypoints\":0,\"nodes\":0,\"time_ms\":0,"
+        << "\"mean_pd\":0,\"max_pd\":0,\"path\":[],"
         << "\"error\":\"";
     for (char c : std::string(e.what())) {
       if (c == '"' || c == '\\') out << '\\';

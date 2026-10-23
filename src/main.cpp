@@ -1,5 +1,6 @@
 #include "uav/astar3d.hpp"
 #include "uav/environment.hpp"
+#include "uav/radar.hpp"
 #include "uav/rrt_star.hpp"
 
 #include <cstdlib>
@@ -9,7 +10,8 @@
 
 namespace {
 
-void print_stats(const char* name, const uav::PlannerStats& s) {
+void print_stats(const char* name, const uav::PlannerStats& s, double mean_pd,
+                 double max_pd) {
   std::cout << "=== " << name << " ===\n";
   std::cout << "  success:        " << (s.success ? "yes" : "no") << "\n";
   std::cout << "  path_length_m:  " << s.path_length << "\n";
@@ -17,6 +19,8 @@ void print_stats(const char* name, const uav::PlannerStats& s) {
   std::cout << "  waypoints:      " << s.path_waypoints << "\n";
   std::cout << "  nodes/iters:    " << s.nodes_expanded << "\n";
   std::cout << "  time_ms:        " << s.time_ms << "\n";
+  std::cout << "  mean_pd:        " << mean_pd << "\n";
+  std::cout << "  max_pd:         " << max_pd << "\n";
 }
 
 bool write_csv(const std::string& path, const std::vector<uav::Vec3>& pts) {
@@ -28,7 +32,6 @@ bool write_csv(const std::string& path, const std::vector<uav::Vec3>& pts) {
 }
 
 std::string default_map_path() {
-  // Prefer configs next to build/, then source tree relative paths.
   const char* candidates[] = {"../configs/sample_map.json",
                               "configs/sample_map.json",
                               "/workspace/uav-path-planning/configs/sample_map.json"};
@@ -91,12 +94,34 @@ int main(int argc, char** argv) {
   uav::Environment env(cfg);
   std::cout << "Buildings: " << cfg.buildings.size()
             << "  Risk zones: " << cfg.risk_zones.size()
+            << "  Radars: " << cfg.radars.size()
+            << "  uav_rcs: " << cfg.uav_rcs
+            << "  pd_cost_weight: " << cfg.pd_cost_weight
             << "  resolution: " << cfg.resolution << " m\n";
+  for (const auto& r : cfg.radars) {
+    std::cout << "  radar " << r.id << " [" << r.band << "] @ " << r.position
+              << " yaw=" << r.yaw_deg << "° range=" << r.max_range_m << " m\n";
+  }
   std::cout << "Start: " << cfg.start << "  Goal: " << cfg.goal << "\n\n";
+
+  // Straight-line reference Pd (ignore buildings) for comparison
+  {
+    double mean_sl = 0, max_sl = 0;
+    std::vector<uav::Vec3> line;
+    for (int i = 0; i <= 20; ++i) {
+      double t = i / 20.0;
+      line.push_back(cfg.start + (cfg.goal - cfg.start) * t);
+    }
+    uav::path_pd_stats(cfg.radars, line, cfg.uav_rcs, mean_sl, max_sl);
+    std::cout << "Straight-line ref (ignore obstacles): mean_pd=" << mean_sl
+              << " max_pd=" << max_sl << "\n\n";
+  }
 
   uav::AStar3D astar(env);
   auto astar_stats = astar.plan(cfg.start, cfg.goal);
-  print_stats("A* 3D (26-neighbor, risk-aware)", astar_stats);
+  double a_mean = 0, a_max = 0;
+  uav::path_pd_stats(cfg.radars, astar_stats.path, cfg.uav_rcs, a_mean, a_max);
+  print_stats("A* 3D (26-neighbor, risk+Pd-aware)", astar_stats, a_mean, a_max);
 
   uav::RRTStarParams rp;
   rp.informed_sampling = informed;
@@ -106,9 +131,11 @@ int main(int argc, char** argv) {
   rp.goal_tolerance = 4.0;
   uav::RRTStar3D rrt(env, rp);
   auto rrt_stats = rrt.plan(cfg.start, cfg.goal);
+  double r_mean = 0, r_max = 0;
+  uav::path_pd_stats(cfg.radars, rrt_stats.path, cfg.uav_rcs, r_mean, r_max);
   print_stats(informed ? "RRT* 3D (Informed after first solution)"
                        : "RRT* 3D (uniform sampling)",
-              rrt_stats);
+              rrt_stats, r_mean, r_max);
 
   if (!csv_prefix.empty()) {
     if (astar_stats.success)
