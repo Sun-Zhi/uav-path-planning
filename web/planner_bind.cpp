@@ -25,8 +25,11 @@ std::string serialize_result(const uav::MapConfig& cfg,
       << "\"mean_pd\":" << mean_pd << ","
       << "\"max_pd\":" << max_pd << ",";
   if (cfg.geo_frame) {
+    out.precision(8);
     out << "\"origin\":{\"lat\":" << cfg.origin.lat << ",\"lon\":"
-        << cfg.origin.lon << ",\"alt\":" << cfg.origin.alt << "},";
+        << cfg.origin.lon;
+    out.precision(4);
+    out << ",\"alt\":" << cfg.origin.alt << "},";
   }
   out << "\"path\":[";
   for (size_t i = 0; i < st.path.size(); ++i) {
@@ -34,8 +37,10 @@ std::string serialize_result(const uav::MapConfig& cfg,
     if (i) out << ",";
     if (cfg.geo_frame) {
       uav::GeoPoint g = uav::geo_from_enu(cfg.origin, p);
-      out << "{\"lat\":" << g.lat << ",\"lon\":" << g.lon << ",\"alt\":" << g.alt
-          << "}";
+      out.precision(8);
+      out << "{\"lat\":" << g.lat << ",\"lon\":" << g.lon;
+      out.precision(4);
+      out << ",\"alt\":" << g.alt << "}";
     } else {
       out << "{\"x\":" << p.x << ",\"y\":" << p.y << ",\"z\":" << p.z << "}";
     }
