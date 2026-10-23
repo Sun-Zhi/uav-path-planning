@@ -523,9 +523,39 @@
     for (const r of radars) {
       const us = isUsRadar(r);
       const pos = r.position;
+      const accent = us
+        ? Cesium.Color.fromCssColorString('#4aa3ff')
+        : Cesium.Color.fromCssColorString('#ffb347');
+      const rangeM = Math.max(80, Number(r.max_range_m) || 800);
+      const siteAlt = pos.alt || 0;
+      // Soft ground footprint + short translucent cylinder (lab-scaled range).
+      viewer.entities.add({
+        name: (r.id || 'radar') + '-footprint',
+        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt),
+        ellipse: {
+          semiMajorAxis: rangeM,
+          semiMinorAxis: rangeM,
+          height: siteAlt,
+          material: accent.withAlpha(0.12),
+          outline: true,
+          outlineColor: accent.withAlpha(0.45),
+        },
+      });
+      viewer.entities.add({
+        name: (r.id || 'radar') + '-cone',
+        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt + 40),
+        cylinder: {
+          length: 80,
+          topRadius: 8,
+          bottomRadius: Math.min(220, rangeM * 0.18),
+          material: accent.withAlpha(0.18),
+          outline: true,
+          outlineColor: accent.withAlpha(0.5),
+        },
+      });
       viewer.entities.add({
         name: r.label || r.id || 'radar',
-        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, (pos.alt || 0) + 25),
+        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt + 25),
         billboard: {
           image: makeRadarCanvas(us),
           verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
@@ -904,6 +934,15 @@
     }
   }
 
+
+  function refreshRadarVisibility() {
+    if (!baseMap || !viewer) return;
+    const savedPath = lastPath.slice();
+    const savedAlgo = lastAlgo;
+    rebuildCesiumScene(baseMap, true);
+    if (savedPath.length) drawPath(savedPath, savedAlgo);
+  }
+
   function onReset() {
     if (!baseMap) return;
     stopFlight();
@@ -951,6 +990,9 @@
     $('loadMapBtn').addEventListener('click', () => {
       onLoadMap().catch((e) => setStats(String(e), 'err'));
     });
+    for (const id of ['radarUs', 'radarCn']) {
+      $(id).addEventListener('change', refreshRadarVisibility);
+    }
     const flyHandler = () => {
       onFlyToggle().catch((e) => setStats(String(e), 'err'));
     };

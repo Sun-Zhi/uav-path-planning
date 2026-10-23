@@ -239,10 +239,10 @@
       </div>
       <p class="disclaimer">
         Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:#9aa8bc">OpenStreetMap</a> contributors.
-        Imagery: Esri World Imagery (or OSM fallback). CesiumJS.
+        Imagery: Esri World Imagery (or OSM fallback). Engine: CesiumJS.
         Teaching radar approximations inspired by open SPY-6 / JY-27 literature; <strong>not</strong> real system parameters.
-        Ranges are lab-scaled to the local demo map. 教学近似，非实装参数；作用距离已缩放到演示局部地图。
-        Overpass OSM 拉取见后续任务；本页当前使用离线国贸样例 footprint。
+        Ranges are lab-scaled to the local few-km demo map (not real hundreds-of-km systems). 教学近似，非实装参数；作用距离已缩放到演示局部几公里地图。
+        「加载地图」经 Overpass 拉取 OSM 建筑；离线 <code>sample_map.json</code> 作回退。
       </p>
     </aside>
     <main id="view">
@@ -254,6 +254,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
   <script src="./planner.js"></script>
-  <script src="./app.js?v=cesium2"></script>
+  <script src="./app.js?v=cesium3"></script>
 </body>
 </html>
