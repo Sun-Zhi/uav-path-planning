@@ -57,8 +57,27 @@
     });
   }
 
+  // True if form lat/lon differ from the loaded map (needs 加载地图 first).
+  function latLonStale() {
+    if (!baseMap) return false;
+    const eps = 1e-5;
+    const d = (id, v) => Math.abs(num(id, v) - v) > eps;
+    return (
+      d('slat', baseMap.start.lat) || d('slon', baseMap.start.lon) ||
+      d('glat', baseMap.goal.lat) || d('glon', baseMap.goal.lon)
+    );
+  }
+
   function currentMapJson() {
     const map = structuredClone(baseMap);
+    if (latLonStale()) {
+      // Buildings belong to baseMap's corridor: keep its lat/lon, allow alt edits.
+      const sAlt = num('salt', map.start.alt);
+      const gAlt = num('galt', map.goal.alt);
+      fillLatLon(baseMap);
+      $('salt').value = sAlt;
+      $('galt').value = gAlt;
+    }
     map.start = {
       lat: num('slat', map.start.lat),
       lon: num('slon', map.start.lon),
@@ -822,7 +841,8 @@
           `可稍后重试「加载地图」`,
         'err'
       );
-      // Leave baseMap and scene untouched (last successful map stays).
+      // Leave baseMap and scene untouched; snap inputs back to last good map.
+      if (baseMap) fillLatLon(baseMap);
     } finally {
       spinner.classList.remove('show');
       if (planBtn) planBtn.disabled = false;
@@ -833,6 +853,7 @@
   async function onPlan() {
     planBtn.disabled = true;
     spinner.classList.add('show');
+    const stale = latLonStale();
     setStats('Planning…', '');
     stopFlight();
     try {
@@ -867,8 +888,12 @@
           `waypoints: ${result.waypoints}\n` +
           `nodes: ${result.nodes}\n` +
           `time: ${Number(result.time_ms).toFixed(2)} ms\n` +
-          `→ 点「模拟飞行」让无人机图标沿路线飞`,
-        'ok'
+          `→ 点「模拟飞行」让无人机图标沿路线飞` +
+          (stale
+            ? `\n⚠ 经纬度已改但未加载地图，已按当前地图起终点规划；请先点「加载地图」\n` +
+              `⚠ Lat/lon changed without 加载地图 — planned with loaded map's start/goal`
+            : ''),
+        stale ? 'err' : 'ok'
       );
     } catch (e) {
       console.error(e);
