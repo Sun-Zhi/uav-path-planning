@@ -652,9 +652,7 @@ async function onFlyToggle() {
     return;
   }
   if (!lastPath.length) {
-    setStats('尚无路径，先自动规划再飞…', '');
-    await onPlan(); // onPlan already starts flight on success
-    if (!flight.active && lastPath.length >= 2) startFlight(lastPath);
+    setStats('请先点「规划」生成路径，再点「模拟飞行」', 'err');
     return;
   }
   startFlight(lastPath);
