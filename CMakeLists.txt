@@ -32,3 +32,8 @@ add_executable(uav_test_geo_map tests/test_geo_map.cpp)
 target_include_directories(uav_test_geo_map PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_test(NAME geo_map COMMAND uav_test_geo_map
          WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
+add_executable(uav_test_radar_avoid tests/test_radar_avoid.cpp)
+target_include_directories(uav_test_radar_avoid PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+add_test(NAME radar_avoid COMMAND uav_test_radar_avoid
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

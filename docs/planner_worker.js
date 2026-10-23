@@ -1,5 +1,5 @@
 /* Plans off the UI thread so a long WASM call cannot freeze the page. */
-importScripts('planner.js?v=rrt-scale1');
+importScripts('planner.js?v=ux3');
 
 let modulePromise = null;
 
@@ -11,7 +11,9 @@ self.onmessage = async (ev) => {
       if (typeof createPlanner !== 'function') {
         throw new Error('createPlanner not found');
       }
-      modulePromise = createPlanner();
+      modulePromise = createPlanner({
+        locateFile: (path) => (path.endsWith('.wasm') ? path + '?v=ux3' : path),
+      });
     }
     const mod = await modulePromise;
     const raw = mod.plan(String(data.mapJson || ''), String(data.algo || 'astar'), !!data.informed);

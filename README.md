@@ -93,7 +93,7 @@ ctest --test-dir build --output-on-failure
 | `us_spy6_class` | AN/SPY-6 S-band AESA | S | 较窄波束、较高 snr_ref |
 | `cn_jy27_class` | JY-27 VHF 预警 | VHF | 更宽波束；`rcs_lo_factor=4` 定性体现米波对隐身不敏感 |
 
-真实系统作用距离为数百公里量级；geo 演示将 `max_range_m` / `r_ref_m` **实验室缩放到几公里局部地图**（约 1–2 km），旧米制样例曾缩到约 100 m 盒内。UI 与 README 均标注 **teaching / scaled / 非实装**。
+真实系统作用距离为数百公里量级；geo 演示将 `max_range_m` / `r_ref_m` **实验室缩放到几百米的波束扇区**，扇区横跨国贸样例走廊，两侧留出可绕行的低 Pd 通道。`yaw_deg` 是局部 ENU 方位（0 = 东，90 = 北），不是指南针方位。旧米制样例曾缩到约 100 m 盒内。UI 画的是半功率扇区，不是整圆作用距离。UI 与 README 均标注 **teaching / scaled / 非实装**。
 
 ---
 
@@ -103,9 +103,9 @@ ctest --test-dir build --output-on-failure
 
 **https://sun-zhi.github.io/uav-path-planning/**
 
-**用法：** 任意经纬度（默认北京国贸 CBD：起点约 `39.908°N, 116.460°E`，终点约 `39.912°N, 116.455°E`，高度 80–120 m）→ 页面先显示离线样例和倾斜地球（可立刻 **Plan**）→ **加载地图** / 后台 Overpass 拉当地 OSM 建筑 → **▶模拟飞行**（镜头跟随，航迹带高度帘）。CN/US 教学雷达开关可过滤代价与场景图标。
+**用法：** 任意经纬度（默认北京国贸 CBD：起点约 `39.908°N, 116.460°E`，终点约 `39.912°N, 116.455°E`，高度 80–120 m）→ 页面先显示离线手绘样例和倾斜地球（可立刻 **Plan**）→ 后台换成打包的国贸 OSM，并经 Overpass 拉实时建筑 → **▶模拟飞行**（镜头跟随，航迹带高度帘）。CN/US 教学雷达开关会重算路径；彩色扇区是要避开的波束，不是整圆。
 
-默认打开会在后台拉一次国贸一带 OSM，不挡住地球，也不会用「Planning…」遮罩等 Overpass。Overpass 超过约 22 秒会明确失败并留下当前建筑。点「规划」在后台线程跑 WASM，约 20 秒未完成会中止并关掉遮罩。改经纬度后请再点「加载地图」。起终点外扩约 1.5 km，单次建筑上限约 800 栋。窗口变窄或变矮时侧栏收到上方，相机会把起终点走廊保持在画面里。
+默认打开会在后台拉一次国贸一带 OSM，不挡住地球，也不会用「Planning…」遮罩等 Overpass。先请求 `overpass.openstreetmap.fr`（该镜像允许 `https://sun-zhi.github.io` 的 Referer；浏览器默认 UA 且没有这个来源会被 403）。失败再按顺序试 `overpass.osm.ch`、`overpass-api.de`、`lz4.overpass-api.de`、`overpass.kumi.systems`。`overpass-api.de` 当前经常 502。全部失败时状态行写明画面到底是手绘样例、随页面打包的国贸提取，还是本机上次成功的 OSM，并保留表单坐标以便「加载地图」重试。本机 `http://localhost` 预览通常拿不到实时 Overpass，会停在打包提取上。点「规划」在后台线程跑 WASM，约 20 秒未完成会中止并关掉遮罩。改经纬度后请再点「加载地图」。建筑查询把起终点外扩约 1.5 km（最多约 800 栋）；规划边界收在走廊外约 900 m，避免 RRT\* 在几公里空域里采样不到绕开波束的路。窗口变窄或变矮时侧栏收到上方，相机会把起终点走廊保持在画面里。
 
 本地预览（需先有 `docs/planner.{js,wasm}`）：
 
@@ -142,7 +142,7 @@ python3 -m http.server 8080
 
 ## English (short)
 
-Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser demo (Cesium + OSM Overpass, WGS84 lat/lon): https://sun-zhi.github.io/uav-path-planning/ (rebuild WASM with `./web/build.sh`). Default Beijing Guomao opens on an oblique sample globe immediately; OSM buildings load in the background. Any lat/lon → 加载地图 → Plan → fly (chase camera). Risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed) on OSM buildings + teaching SNR→Pd radars (SPY-6 / JY-27–class, lab-scaled to few-km map). Attributions: OSM, Esri imagery, CesiumJS. See `PAPERS.md`. No ROS. Exit 0 on success.
+Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser demo (Cesium + OSM Overpass, WGS84 lat/lon): https://sun-zhi.github.io/uav-path-planning/ (rebuild WASM with `./web/build.sh`). Default Beijing Guomao opens on an oblique sample globe immediately; a bundled Guomao extract and live Overpass then fill in buildings. If every mirror fails, the status names what is still on screen (hand-drawn sample, bundled extract, or last successful OSM) and 加载地图 retries the coordinates in the form. Any lat/lon → 加载地图 → Plan → fly (chase camera). Risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed) avoid the drawn half-power radar fans (SPY-6 / JY-27–class, lab-scaled). Attributions: OSM, Esri imagery, CesiumJS. See `PAPERS.md`. No ROS. Exit 0 on success.
 
 ---
 

@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <!-- overpass.openstreetmap.fr 403s browser clients that omit this origin. -->
+  <meta name="referrer" content="origin" />
   <title>UAV Path Planning Demo / 无人机航迹规划演示</title>
   <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
   <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin />
@@ -278,14 +280,14 @@
         <div><span class="swatch" style="background:#ffb347"></span>CN JY-27 类雷达（教学）</div>
         <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
         <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
-        打开即可看到样例地球，OSM 建筑在后台加载。规划后点「模拟飞行」（镜头跟随）。拖拽旋转 · 滚轮可拉远到整颗地球。
+        彩色扇区是规划要避开的波束代价区（半功率扇面），不是整圆作用距离。打开先看到手绘样例，OSM 建筑在后台加载。规划后点「模拟飞行」（镜头跟随）。拖拽旋转 · 滚轮可拉远到整颗地球。
       </div>
       <p class="disclaimer">
         Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:#9aa8bc">OpenStreetMap</a> contributors.
         Imagery: Esri World Imagery (or OSM fallback). Engine: CesiumJS.
         Teaching radar approximations inspired by open SPY-6 / JY-27 literature; <strong>not</strong> real system parameters.
         Ranges are lab-scaled to the local few-km demo map (not real hundreds-of-km systems). 教学近似，非实装参数；作用距离已缩放到演示局部几公里地图。
-        「加载地图」经 Overpass 拉取 OSM 建筑；离线 <code>sample_map.json</code> 作回退。
+        「加载地图」经 Overpass 拉取 OSM 建筑。失败时画面会写明是手绘样例、打包的国贸提取，还是本机上次成功的 OSM。离线 <code>sample_map.json</code> 只是手绘盒子。
       </p>
     </aside>
     <main id="view">
@@ -297,7 +299,8 @@
   </div>
 
   <script>
-    /* Default Guomao bbox = padBbox(sample start/goal, 1500 m). Starts before Cesium downloads. */
+    /* Default Guomao bbox = padBbox(sample start/goal, 1500 m). One healthy mirror, before Cesium downloads.
+       app.js retries the full mirror list if this prefetch fails. Keep the query in sync with overpassQuery(). */
     window.__osmPrefetchMeta = {
       minLat: 39.89452533237514,
       minLon: 116.43743320297743,
@@ -307,67 +310,40 @@
     window.__osmPrefetch = (function () {
       var b = window.__osmPrefetchMeta;
       var query =
-        '[out:json][timeout:18];\n' +
+        '[out:json][timeout:25];\n' +
         '(\n' +
         '  way["building"](' + b.minLat + ',' + b.minLon + ',' + b.maxLat + ',' + b.maxLon + ');\n' +
         '  relation["building"](' + b.minLat + ',' + b.minLon + ',' + b.maxLat + ',' + b.maxLon + ');\n' +
         ');\n' +
         'out geom;';
-      var body = 'data=' + encodeURIComponent(query);
-      var endpoints = [
-        'https://overpass-api.de/api/interpreter',
-        'https://overpass.kumi.systems/api/interpreter',
-        'https://lz4.overpass-api.de/api/interpreter',
-      ];
-      var controllers = endpoints.map(function () { return new AbortController(); });
-      function hit(url, i) {
-        return new Promise(function (resolve, reject) {
-          setTimeout(function () {
-            var timer = setTimeout(function () { controllers[i].abort(); }, 18000);
-            fetch(url, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
-                Accept: 'application/json',
-              },
-              body: body,
-              signal: controllers[i].signal,
-            }).then(function (res) {
-              if (!res.ok) throw new Error('HTTP ' + res.status);
-              return res.json();
-            }).then(function (data) {
-              clearTimeout(timer);
-              if (!data || !Array.isArray(data.elements)) throw new Error('invalid Overpass JSON');
-              resolve(data);
-            }).catch(function (err) {
-              clearTimeout(timer);
-              reject(err);
-            });
-          }, i * 2200);
-        });
-      }
-      var tasks = endpoints.map(hit);
-      function finish(ok, value) {
-        controllers.forEach(function (c) { try { c.abort(); } catch (e) {} });
-        if (ok) return value;
-        throw value;
-      }
-      var raced = (typeof Promise.any === 'function')
-        ? Promise.any(tasks)
-        : new Promise(function (resolve, reject) {
-            var fails = 0;
-            tasks.forEach(function (p) {
-              p.then(resolve, function () {
-                if (++fails === tasks.length) reject(new Error('Overpass failed on all mirrors'));
-              });
-            });
-          });
-      return raced.then(function (data) { return finish(true, data); }, function (err) { return finish(false, err); });
+      var ctrl = new AbortController();
+      var timer = setTimeout(function () { ctrl.abort(); }, 28000);
+      // referrerPolicy origin: the French mirror allows https://sun-zhi.github.io and rejects a bare browser POST.
+      return fetch('https://overpass.openstreetmap.fr/api/interpreter', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          Accept: 'application/json',
+        },
+        body: 'data=' + encodeURIComponent(query),
+        referrerPolicy: 'origin',
+        signal: ctrl.signal,
+      }).then(function (res) {
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return res.json();
+      }).then(function (data) {
+        clearTimeout(timer);
+        if (!data || !Array.isArray(data.elements)) throw new Error('invalid Overpass JSON');
+        return data;
+      }).catch(function (err) {
+        clearTimeout(timer);
+        throw err;
+      });
     })();
   </script>
   <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
-  <script src="./framing.js?v=ux1"></script>
-  <script src="./planner.js?v=rrt-scale1"></script>
-  <script src="./app.js?v=ux2"></script>
+  <script src="./framing.js?v=ux3"></script>
+  <script src="./planner.js?v=ux3"></script>
+  <script src="./app.js?v=ux3"></script>
 </body>
 </html>

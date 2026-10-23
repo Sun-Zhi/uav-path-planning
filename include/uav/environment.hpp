@@ -12,6 +12,7 @@
 #include "uav/radar.hpp"
 #include "uav/vec3.hpp"
 #include <algorithm>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -41,7 +42,7 @@ struct MapConfig {
 
 class Environment {
  public:
-  explicit Environment(MapConfig cfg) : cfg_(std::move(cfg)) {}
+  explicit Environment(MapConfig cfg) : cfg_(std::move(cfg)) { build_building_index(); }
 
   const MapConfig& config() const { return cfg_; }
   const Bounds& bounds() const { return cfg_.bounds; }
@@ -53,15 +54,43 @@ class Environment {
   }
 
   bool collides_hard(const Vec3& p) const {
-    for (const auto& b : cfg_.buildings) {
-      if (b.contains(p)) return true;
+    if (bins_.empty()) {
+      for (const auto& b : cfg_.buildings) {
+        if (b.contains(p)) return true;
+      }
+      return false;
+    }
+    const auto& ids = bins_[static_cast<size_t>(iy_of(p.y) * nx_ + ix_of(p.x))];
+    for (int id : ids) {
+      if (cfg_.buildings[static_cast<size_t>(id)].contains(p)) return true;
     }
     return false;
   }
 
   bool segment_hits_building(const Vec3& a, const Vec3& b) const {
-    for (const auto& box : cfg_.buildings) {
-      if (box.intersects_segment(a, b)) return true;
+    if (cfg_.buildings.empty()) return false;
+    if (bins_.empty()) {
+      for (const auto& box : cfg_.buildings) {
+        if (box.intersects_segment(a, b)) return true;
+      }
+      return false;
+    }
+    const int x0 = ix_of(std::min(a.x, b.x));
+    const int x1 = ix_of(std::max(a.x, b.x));
+    const int y0 = iy_of(std::min(a.y, b.y));
+    const int y1 = iy_of(std::max(a.y, b.y));
+    if (++seen_clock_ == 0) {
+      std::fill(seen_.begin(), seen_.end(), 0);
+      seen_clock_ = 1;
+    }
+    for (int y = y0; y <= y1; ++y) {
+      for (int x = x0; x <= x1; ++x) {
+        for (int id : bins_[static_cast<size_t>(y * nx_ + x)]) {
+          if (seen_[static_cast<size_t>(id)] == seen_clock_) continue;
+          seen_[static_cast<size_t>(id)] = seen_clock_;
+          if (cfg_.buildings[static_cast<size_t>(id)].intersects_segment(a, b)) return true;
+        }
+      }
     }
     return false;
   }
@@ -89,6 +118,64 @@ class Environment {
 
  private:
   MapConfig cfg_;
+  // Uniform grid so OSM-sized building lists are not scanned per A* edge.
+  double cell_{80.0};
+  double origin_x_{0};
+  double origin_y_{0};
+  int nx_{0};
+  int ny_{0};
+  std::vector<std::vector<int>> bins_;
+  mutable std::vector<std::uint32_t> seen_;
+  mutable std::uint32_t seen_clock_{0};
+
+  static int clamp_index(int v, int lo, int hi) {
+    if (v < lo) return lo;
+    if (v > hi) return hi;
+    return v;
+  }
+
+  int ix_of(double x) const {
+    return clamp_index(static_cast<int>(std::floor((x - origin_x_) / cell_)), 0, nx_ - 1);
+  }
+  int iy_of(double y) const {
+    return clamp_index(static_cast<int>(std::floor((y - origin_y_) / cell_)), 0, ny_ - 1);
+  }
+
+  void build_building_index() {
+    if (cfg_.buildings.empty()) return;
+    double minx = cfg_.bounds.min_pt.x;
+    double maxx = cfg_.bounds.max_pt.x;
+    double miny = cfg_.bounds.min_pt.y;
+    double maxy = cfg_.bounds.max_pt.y;
+    for (const auto& b : cfg_.buildings) {
+      minx = std::min(minx, b.min_pt.x);
+      maxx = std::max(maxx, b.max_pt.x);
+      miny = std::min(miny, b.min_pt.y);
+      maxy = std::max(maxy, b.max_pt.y);
+    }
+    origin_x_ = minx;
+    origin_y_ = miny;
+    nx_ = std::max(1, static_cast<int>(std::floor((maxx - minx) / cell_)) + 1);
+    ny_ = std::max(1, static_cast<int>(std::floor((maxy - miny) / cell_)) + 1);
+    if (nx_ > 4000 || ny_ > 4000) {
+      nx_ = ny_ = 0;
+      return;
+    }
+    bins_.assign(static_cast<size_t>(nx_ * ny_), {});
+    for (int i = 0; i < static_cast<int>(cfg_.buildings.size()); ++i) {
+      const auto& b = cfg_.buildings[static_cast<size_t>(i)];
+      const int x0 = ix_of(b.min_pt.x);
+      const int x1 = ix_of(b.max_pt.x);
+      const int y0 = iy_of(b.min_pt.y);
+      const int y1 = iy_of(b.max_pt.y);
+      for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+          bins_[static_cast<size_t>(y * nx_ + x)].push_back(i);
+        }
+      }
+    }
+    seen_.assign(cfg_.buildings.size(), 0);
+  }
 };
 
 /** Minimal JSON-ish loader for our sample_map format (no external deps). */
