@@ -128,13 +128,7 @@ inline std::vector<std::string> split_objects(const std::string& arr) {
   return out;
 }
 
-inline MapConfig load_map_json(const std::string& path) {
-  std::ifstream in(path);
-  if (!in) throw std::runtime_error("Cannot open map: " + path);
-  std::stringstream buffer;
-  buffer << in.rdbuf();
-  const std::string s = buffer.str();
-
+inline MapConfig load_map_json_string(const std::string& s) {
   MapConfig cfg;
   auto bounds_pos = s.find("\"bounds\"");
   if (bounds_pos != std::string::npos) {
@@ -186,6 +180,14 @@ inline MapConfig load_map_json(const std::string& path) {
   parse_aabb_list("buildings", true);
   parse_aabb_list("risk_zones", false);
   return cfg;
+}
+
+inline MapConfig load_map_json(const std::string& path) {
+  std::ifstream in(path);
+  if (!in) throw std::runtime_error("Cannot open map: " + path);
+  std::stringstream buffer;
+  buffer << in.rdbuf();
+  return load_map_json_string(buffer.str());
 }
 
 }  // namespace uav
