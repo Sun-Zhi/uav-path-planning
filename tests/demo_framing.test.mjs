@@ -90,6 +90,89 @@ test('teaching radars aim with ENU yaw across the Guomao corridor', () => {
   assert.ok(ring[3].lat > mid.lat);
 });
 
+// Cesium 1.122: viewBoundingSphere/lookAt write the local offset and leave
+// positionWC stale. lookAtTransform then copies that cached world pose, which
+// on first frame is the default Americas camera. Reading positionWC flushes it.
+function staleLookAtCamera(initial) {
+  let pose = { ...initial };
+  let cachedWc = { ...initial };
+  let dirty = false;
+  return {
+    get pose() { return pose; },
+    get positionWC() {
+      if (dirty) {
+        cachedWc = { ...pose };
+        dirty = false;
+      }
+      return cachedWc;
+    },
+    viewBoundingSphere(next) {
+      pose = { ...next };
+      dirty = true;
+    },
+    lookAt(next) {
+      pose = { ...next };
+      dirty = true;
+    },
+    lookAtTransform() {
+      pose = { ...cachedWc };
+      dirty = false;
+    },
+  };
+}
+
+const beijing = { lat: 39.918, lon: 116.465, h: 706 };
+const americas = { lat: 35.159, lon: -82.5, h: 18457188 };
+
+test('unlock without a world-position flush restores the default space view', () => {
+  const cam = staleLookAtCamera(americas);
+  cam.viewBoundingSphere(beijing);
+  cam.lookAtTransform();
+  assert.equal(cam.pose.h, americas.h);
+  assert.ok(Math.abs(cam.pose.lon - americas.lon) < 1e-6);
+});
+
+test('unlockCamera keeps the framed corridor instead of the default globe', () => {
+  const cam = staleLookAtCamera(americas);
+  cam.viewBoundingSphere(beijing);
+  F.unlockCamera(cam, 'IDENTITY');
+  assert.equal(cam.pose.lat, beijing.lat);
+  assert.equal(cam.pose.lon, beijing.lon);
+  assert.equal(cam.pose.h, beijing.h);
+});
+
+test('chase lookAt stays locked until unlockCamera flushes the world pose', () => {
+  const cam = staleLookAtCamera(americas);
+  const chase = { lat: 39.91, lon: 116.46, h: 460 };
+  cam.lookAt(chase);
+  assert.equal(cam.pose.h, chase.h);
+  F.unlockCamera(cam, 'IDENTITY');
+  assert.equal(cam.pose.lat, chase.lat);
+  assert.equal(cam.pose.h, chase.h);
+});
+
+const R = 6378137;
+
+test('city framing is not pulled back to a centered whole-Earth view', () => {
+  assert.equal(F.shouldRecenterGlobe(R + 706, 0.528, R + 700), false);
+  assert.equal(F.shouldRecenterGlobe(R + 1.4e6, 0.718, R + 1.2e6), false);
+});
+
+test('zooming out until the whole Earth shows recenters an off-axis view', () => {
+  // Measured from the oblique Guomao camera: at ~8,000 km the geocenter
+  // sits on the bottom edge (alignment 0.929); at ~28,000 km it is still
+  // ~160 px below the canvas center (alignment 0.987).
+  assert.equal(F.shouldRecenterGlobe(R + 8.26e6, 0.929, R + 1.4e6), true);
+  assert.equal(F.shouldRecenterGlobe(R + 2.76e7, 0.987, R + 8e6), true);
+  assert.equal(F.shouldRecenterGlobe(R + 2.76e7, 0.999, R + 8e6), false);
+});
+
+test('spinning or tilting the whole Earth does not snap the camera back', () => {
+  const far = R + 2e7;
+  assert.equal(F.shouldRecenterGlobe(far, 0.9, far), false);
+  assert.equal(F.shouldRecenterGlobe(far * 0.99, 0.9, far), false);
+});
+
 test('footprints drop a repeated closing vertex', () => {
   const fp = F.footprintFromLatLonList([
     { lat: 1, lon: 2 },
@@ -113,9 +196,32 @@ test('demo page shows the sample globe before Overpass and resizes the viewer', 
   assert.match(app, /withTimeout\(/);
   assert.equal((app.match(/spinner\.classList\.add\(/g) || []).length, 1);
   assert.equal(app.includes('midLat - 0.006'), false);
-  assert.match(html, /app\.js\?v=ux3/);
-  assert.match(html, /framing\.js\?v=ux3/);
-  assert.match(html, /planner\.js\?v=ux3/);
+  assert.match(html, /app\.js\?v=ux5/);
+  assert.match(html, /framing\.js\?v=ux5/);
+  assert.match(html, /planner\.js\?v=ux5/);
+  assert.match(app, /planner_worker\.js\?v=ux5/);
+  assert.match(app, /guomao_osm\.json\?v=ux5/);
+  const worker = fs.readFileSync(new URL('../docs/planner_worker.js', import.meta.url), 'utf8');
+  assert.match(worker, /planner\.js\?v=ux5/);
+  assert.match(worker, /\?v=ux5/);
+  assert.match(app, /shouldRecenterGlobe/);
+  assert.match(app, /moveEnd\.addEventListener\(maybeCenterGlobe\)/);
+  assert.equal(app.includes('enableInputs = false'), false);
+  assert.equal(app.includes('enableRotate = false'), false);
+  assert.equal(app.includes('enableZoom = false'), false);
+  assert.equal(app.includes('enableTranslate = false'), false);
+  const centerFn = app.slice(app.indexOf('function maybeCenterGlobe'), app.indexOf('function clearMapEntities'));
+  assert.match(centerFn, /followCam/);
+  assert.match(centerFn, /flight\.active/);
+  assert.match(centerFn, /setView\(/);
+  assert.equal(centerFn.includes('.lookAt('), false);
+  assert.match(app, /unlockCamera/);
+  assert.equal(app.includes('lookAtTransform(Cesium.Matrix4.IDENTITY)'), false);
+  const commit = app.slice(app.indexOf('function commitCorridor'), app.indexOf('async function applyKnownBuildings'));
+  const clearSteer = commit.indexOf('if (!background) userSteered = false');
+  const keepLine = commit.indexOf('const keepCamera');
+  assert.ok(clearSteer > 0 && keepLine > clearSteer, 'explicit load clears the pan flag before the keep decision');
+  assert.match(commit, /keepCamera = background && \(userSteered \|\| preserveFlight\)/);
   assert.match(app, /overpass\.openstreetmap\.fr/);
   const fr = app.indexOf('overpass.openstreetmap.fr');
   const de = app.indexOf('overpass-api.de');

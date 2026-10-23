@@ -145,6 +145,33 @@
     };
   }
 
+  // viewBoundingSphere/lookAt write the local offset and leave positionWC stale.
+  // lookAtTransform copies that cached world pose, so an unlock on the first
+  // frame restores Cesium's default Americas camera. Reading positionWC runs
+  // the camera update first and keeps the pose we just set.
+  function unlockCamera(camera, identityTransform) {
+    if (!camera || typeof camera.lookAtTransform !== 'function') return;
+    void camera.positionWC;
+    camera.lookAtTransform(identityTransform);
+  }
+
+  // WGS84 mean radius. Whole-Earth trackball navigation starts near 2.2 radii
+  // from the geocenter (about 7,600 km altitude).
+  const EARTH_RADIUS_M = 6378137;
+
+  // Zooming out from an oblique city camera translates along the view ray,
+  // which does not pass through the geocenter, so the disk sits low in the
+  // canvas. Recenter only for that zoom-out. A spin or tilt at the same
+  // distance must not snap back, or drag feels locked.
+  function shouldRecenterGlobe(distanceFromCenterM, alignment, previousDistanceM) {
+    const far = distanceFromCenterM > EARTH_RADIUS_M * 2.2;
+    if (!far || !(alignment < 0.995)) return false;
+    if (!(previousDistanceM > 0)) return true;
+    const zoomedOut = distanceFromCenterM > previousDistanceM * 1.02;
+    const crossed = !(previousDistanceM > EARTH_RADIUS_M * 2.2);
+    return zoomedOut || crossed;
+  }
+
   return {
     verticalFovRad: verticalFovRad,
     enuDelta: enuDelta,
@@ -156,5 +183,7 @@
     compassBearingDeg: compassBearingDeg,
     teachingRadarPositions: teachingRadarPositions,
     sectorRing: sectorRing,
+    unlockCamera: unlockCamera,
+    shouldRecenterGlobe: shouldRecenterGlobe,
   };
 });
