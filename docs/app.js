@@ -761,10 +761,6 @@
   }
 
   async function onLoadMap() {
-    stopFlight();
-    lastPath = [];
-    removePathEntity();
-
     if (!baseMap) {
       try {
         await loadSampleAndShow();
@@ -790,6 +786,10 @@
         bbox.maxLon
       );
 
+      // Only mutate map state after Overpass succeeds.
+      stopFlight();
+      lastPath = [];
+      removePathEntity();
       baseMap.start = start;
       baseMap.goal = goal;
       baseMap.origin = { lat: start.lat, lon: start.lon, alt: 0 };
@@ -822,11 +822,7 @@
           `可稍后重试「加载地图」`,
         'err'
       );
-      if (baseMap) {
-        baseMap.start = start;
-        baseMap.goal = goal;
-        rebuildCesiumScene(baseMap, true);
-      }
+      // Leave baseMap and scene untouched (last successful map stays).
     } finally {
       spinner.classList.remove('show');
       if (planBtn) planBtn.disabled = false;
