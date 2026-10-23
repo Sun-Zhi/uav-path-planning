@@ -35,6 +35,77 @@
       targetPitchDeg <= cameraPitchDeg + half + 1e-6;
   }
 
+  // Planner yaw: 0 = east (+X), 90 = north (+Y). Compass bearing is the other way around.
+  function enuYawDeg(from, to) {
+    const d = enuDelta(from, to);
+    return (Math.atan2(d.north, d.east) * 180 / Math.PI + 360) % 360;
+  }
+
+  function compassBearingDeg(from, to) {
+    const d = enuDelta(from, to);
+    return (Math.atan2(d.east, d.north) * 180 / Math.PI + 360) % 360;
+  }
+
+  function corridorFrame(start, goal) {
+    const midLat = (start.lat + goal.lat) / 2;
+    const midLon = (start.lon + goal.lon) / 2;
+    const d = enuDelta(start, goal);
+    const len = Math.hypot(d.east, d.north) || 1;
+    const ux = d.east / len;
+    const uy = d.north / len;
+    return {
+      midLat: midLat,
+      midLon: midLon,
+      ux: ux,
+      uy: uy,
+      px: -uy,
+      py: ux,
+      mlat: M_PER_DEG,
+      mlon: M_PER_DEG * Math.cos(midLat * Math.PI / 180),
+    };
+  }
+
+  // Side-looking gates across the start/goal corridor. sideSign picks which flank.
+  const TEACHING_LAYOUT = [
+    { role: 'us', sideSign: -1, sideM: 360, alongM: -40, alt: 25, pitchDeg: 12 },
+    { role: 'cn', sideSign: 1, sideM: 400, alongM: 30, alt: 25, pitchDeg: 11 },
+  ];
+
+  function teachingRadarPositions(start, goal) {
+    const f = corridorFrame(start, goal);
+    return TEACHING_LAYOUT.map((spec) => {
+      const east = spec.sideSign * f.px * spec.sideM + f.ux * spec.alongM;
+      const north = spec.sideSign * f.py * spec.sideM + f.uy * spec.alongM;
+      const position = {
+        lat: f.midLat + north / f.mlat,
+        lon: f.midLon + east / f.mlon,
+        alt: spec.alt,
+      };
+      return {
+        role: spec.role,
+        position: position,
+        yawDeg: enuYawDeg(position, { lat: f.midLat, lon: f.midLon }),
+        pitchDeg: spec.pitchDeg,
+      };
+    });
+  }
+
+  // Closed ring: site, then the arc. yawDeg is ENU (0 = east). halfAngleDeg is half the drawn fan.
+  function sectorRing(lat, lon, yawDeg, radiusM, halfAngleDeg, steps) {
+    const n = steps || 18;
+    const mlat = M_PER_DEG;
+    const mlon = M_PER_DEG * Math.cos((lat * Math.PI) / 180);
+    const ring = [{ lat: lat, lon: lon }];
+    const half = Math.max(1, halfAngleDeg);
+    for (let i = 0; i <= n; i++) {
+      const a = ((yawDeg - half + (2 * half * i) / n) * Math.PI) / 180;
+      const east = radiusM * Math.cos(a);
+      const north = radiusM * Math.sin(a);
+      ring.push({ lat: lat + north / mlat, lon: lon + east / mlon });
+    }
+    return ring;
+  }
+
   function footprintFromLatLonList(list) {
     const fp = [];
     for (const n of list || []) {
@@ -81,5 +152,9 @@
     targetInFrustum: targetInFrustum,
     footprintFromLatLonList: footprintFromLatLonList,
     corridorFocus: corridorFocus,
+    enuYawDeg: enuYawDeg,
+    compassBearingDeg: compassBearingDeg,
+    teachingRadarPositions: teachingRadarPositions,
+    sectorRing: sectorRing,
   };
 });

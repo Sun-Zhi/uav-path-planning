@@ -1,55 +1,123 @@
 {
   "comment": "Beijing Guomao CBD teaching sample (WGS84). Hand-authored footprints for offline --demo; radar ranges lab-scaled — not real system params.",
   "coord_frame": "wgs84",
-  "origin": {"lat": 39.908, "lon": 116.460, "alt": 0},
+  "origin": {
+    "lat": 39.908,
+    "lon": 116.46,
+    "alt": 0
+  },
   "resolution": 20.0,
   "uav_rcs": 0.1,
   "pd_cost_weight": 25.0,
   "bounds": {
-    "min": {"lat": 39.902, "lon": 116.450, "alt": 0},
-    "max": {"lat": 39.916, "lon": 116.468, "alt": 200}
+    "min": {
+      "lat": 39.902,
+      "lon": 116.45,
+      "alt": 0
+    },
+    "max": {
+      "lat": 39.916,
+      "lon": 116.468,
+      "alt": 200
+    }
   },
-  "start": {"lat": 39.908, "lon": 116.460, "alt": 90},
-  "goal":  {"lat": 39.912, "lon": 116.455, "alt": 110},
+  "start": {
+    "lat": 39.908,
+    "lon": 116.46,
+    "alt": 90
+  },
+  "goal": {
+    "lat": 39.912,
+    "lon": 116.455,
+    "alt": 110
+  },
   "buildings": [
     {
       "name": "block_mid_corridor",
       "height_m": 140,
       "footprint": [
-        {"lat": 39.9092, "lon": 116.4568},
-        {"lat": 39.9092, "lon": 116.4582},
-        {"lat": 39.9104, "lon": 116.4582},
-        {"lat": 39.9104, "lon": 116.4568}
+        {
+          "lat": 39.9092,
+          "lon": 116.4568
+        },
+        {
+          "lat": 39.9092,
+          "lon": 116.4582
+        },
+        {
+          "lat": 39.9104,
+          "lon": 116.4582
+        },
+        {
+          "lat": 39.9104,
+          "lon": 116.4568
+        }
       ]
     },
     {
       "name": "tower_east",
       "height_m": 120,
       "footprint": [
-        {"lat": 39.9084, "lon": 116.4610},
-        {"lat": 39.9084, "lon": 116.4622},
-        {"lat": 39.9094, "lon": 116.4622},
-        {"lat": 39.9094, "lon": 116.4610}
+        {
+          "lat": 39.9084,
+          "lon": 116.461
+        },
+        {
+          "lat": 39.9084,
+          "lon": 116.4622
+        },
+        {
+          "lat": 39.9094,
+          "lon": 116.4622
+        },
+        {
+          "lat": 39.9094,
+          "lon": 116.461
+        }
       ]
     },
     {
       "name": "tower_north",
       "height_m": 100,
       "footprint": [
-        {"lat": 39.9110, "lon": 116.4548},
-        {"lat": 39.9110, "lon": 116.4560},
-        {"lat": 39.9120, "lon": 116.4560},
-        {"lat": 39.9120, "lon": 116.4548}
+        {
+          "lat": 39.911,
+          "lon": 116.4548
+        },
+        {
+          "lat": 39.911,
+          "lon": 116.456
+        },
+        {
+          "lat": 39.912,
+          "lon": 116.456
+        },
+        {
+          "lat": 39.912,
+          "lon": 116.4548
+        }
       ]
     },
     {
       "name": "low_podium_west",
       "height_m": 45,
       "footprint": [
-        {"lat": 39.9070, "lon": 116.4545},
-        {"lat": 39.9070, "lon": 116.4560},
-        {"lat": 39.9082, "lon": 116.4560},
-        {"lat": 39.9082, "lon": 116.4545}
+        {
+          "lat": 39.907,
+          "lon": 116.4545
+        },
+        {
+          "lat": 39.907,
+          "lon": 116.456
+        },
+        {
+          "lat": 39.9082,
+          "lon": 116.456
+        },
+        {
+          "lat": 39.9082,
+          "lon": 116.4545
+        }
       ]
     }
   ],
@@ -59,14 +127,18 @@
       "id": "us_spy6_class",
       "label": "US SPY-6–class (teaching, scaled) / 教学近似",
       "band": "S (~3 GHz label)",
-      "position": {"lat": 39.9065, "lon": 116.4625, "alt": 5},
-      "yaw_deg": 135,
-      "pitch_deg": 8,
-      "az_hpbw_deg": 12,
-      "el_hpbw_deg": 10,
-      "max_range_m": 1200,
-      "snr_ref_linear": 200,
-      "r_ref_m": 400,
+      "position": {
+        "lat": 39.91197879,
+        "lon": 116.4608674,
+        "alt": 25
+      },
+      "yaw_deg": 217.4558,
+      "pitch_deg": 12,
+      "az_hpbw_deg": 34,
+      "el_hpbw_deg": 70,
+      "max_range_m": 620,
+      "snr_ref_linear": 28,
+      "r_ref_m": 360,
       "sigma_ref_m2": 0.1,
       "snr_thresh_db": 10,
       "rcs_lo_factor": 1.0
@@ -75,16 +147,20 @@
       "id": "cn_jy27_class",
       "label": "CN JY-27–class (teaching, scaled) / 教学近似",
       "band": "VHF (~300 MHz label)",
-      "position": {"lat": 39.9135, "lon": 116.4520, "alt": 5},
-      "yaw_deg": 315,
-      "pitch_deg": 5,
-      "az_hpbw_deg": 35,
-      "el_hpbw_deg": 25,
-      "max_range_m": 1500,
-      "snr_ref_linear": 80,
-      "r_ref_m": 500,
+      "position": {
+        "lat": 39.90770769,
+        "lon": 116.45387552,
+        "alt": 25
+      },
+      "yaw_deg": 39.5059,
+      "pitch_deg": 11,
+      "az_hpbw_deg": 42,
+      "el_hpbw_deg": 75,
+      "max_range_m": 700,
+      "snr_ref_linear": 10,
+      "r_ref_m": 400,
       "sigma_ref_m2": 0.1,
-      "snr_thresh_db": 8,
+      "snr_thresh_db": 9,
       "rcs_lo_factor": 4.0
     }
   ]

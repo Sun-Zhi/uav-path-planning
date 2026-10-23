@@ -54,7 +54,7 @@
   let planToken = 0;
 
   function runPlan(mapJson, algo, informed, timeoutMs) {
-    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux2');
+    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux3');
     const worker = planWorker;
     const id = ++planToken;
     return new Promise((resolve, reject) => {
@@ -161,6 +161,8 @@
       map.origin = { lat: map.start.lat, lon: map.start.lon, alt: 0 };
     }
     map.coord_frame = map.coord_frame || 'wgs84';
+    delete map.buildingSource;
+    delete map._bbox;
     return map;
   }
 
@@ -302,9 +304,19 @@
     }));
   }
 
-  async function postOverpass(url, query, signal) {
+  const OVERPASS_ENDPOINTS = [
+    'https://overpass.openstreetmap.fr/api/interpreter',
+    'https://overpass.osm.ch/api/interpreter',
+    'https://overpass-api.de/api/interpreter',
+    'https://lz4.overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+  ];
+
+  async function postOverpass(url, query, signal, timeoutMs) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 18000);
+    // openstreetmap.fr is whitelisted for the GitHub Pages referer and can take
+    // ~25s for the Guomao extract. Later mirrors are usually a fast 502.
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs || 12000);
     const onAbort = () => ctrl.abort();
     if (signal) {
       if (signal.aborted) ctrl.abort();
@@ -318,6 +330,7 @@
           Accept: 'application/json',
         },
         body: 'data=' + encodeURIComponent(query),
+        referrerPolicy: 'origin',
         signal: ctrl.signal,
       });
       if (!res.ok) {
@@ -337,7 +350,7 @@
 
   function overpassQuery(minLat, minLon, maxLat, maxLon) {
     return (
-      `[out:json][timeout:18];\n` +
+      `[out:json][timeout:25];\n` +
       `(\n` +
       `  way["building"](${minLat},${minLon},${maxLat},${maxLon});\n` +
       `  relation["building"](${minLat},${minLon},${maxLat},${maxLon});\n` +
@@ -354,35 +367,12 @@
     );
   }
 
-  async function firstOverpass(query) {
-    const endpoints = [
-      'https://overpass-api.de/api/interpreter',
-      'https://overpass.kumi.systems/api/interpreter',
-      'https://lz4.overpass-api.de/api/interpreter',
-    ];
-    const controllers = endpoints.map(() => new AbortController());
-    const tasks = endpoints.map((url, i) => new Promise((resolve, reject) => {
-      setTimeout(() => {
-        postOverpass(url, query, controllers[i].signal).then(resolve, (e) => {
-          console.warn('Overpass failed:', url, e);
-          reject(e);
-        });
-      }, i * 2200);
-    }));
-    try {
-      if (typeof Promise.any === 'function') return await Promise.any(tasks);
-      return await new Promise((resolve, reject) => {
-        let fails = 0;
-        tasks.forEach((p) => p.then(resolve, () => {
-          if (++fails === tasks.length) reject(new Error('Overpass failed on all mirrors'));
-        }));
-      });
-    } finally {
-      controllers.forEach((c) => c.abort());
-    }
+  function overpassHost(url) {
+    const parts = String(url).split('/');
+    return parts[2] || url;
   }
 
-  async function fetchOsmBuildings(minLat, minLon, maxLat, maxLon) {
+  async function fetchOsmBuildings(minLat, minLon, maxLat, maxLon, isCancelled) {
     const bbox = { minLat, minLon, maxLat, maxLon };
     const pre = globalThis.__osmPrefetch;
     const meta = globalThis.__osmPrefetchMeta;
@@ -390,13 +380,34 @@
       globalThis.__osmPrefetch = null;
       try {
         const data = await pre;
-        return parseOverpassToBuildings(data.elements);
+        const buildings = parseOverpassToBuildings(data.elements);
+        if (buildings.length) return buildings;
+        console.warn('OSM prefetch returned no footprints');
       } catch (e) {
-        console.warn('OSM prefetch failed, retrying:', e);
+        console.warn('OSM prefetch failed, trying mirrors:', e);
       }
     }
-    const data = await firstOverpass(overpassQuery(minLat, minLon, maxLat, maxLon));
-    return parseOverpassToBuildings(data.elements);
+    const query = overpassQuery(minLat, minLon, maxLat, maxLon);
+    const errors = [];
+    for (let i = 0; i < OVERPASS_ENDPOINTS.length; i++) {
+      if (isCancelled && isCancelled()) throw new Error('cancelled');
+      const url = OVERPASS_ENDPOINTS[i];
+      const host = overpassHost(url);
+      setChip(`Overpass ${i + 1}/${OVERPASS_ENDPOINTS.length} · ${host}`, true);
+      try {
+        const timeoutMs = i === 0 ? 28000 : 12000;
+        const data = await postOverpass(url, query, undefined, timeoutMs);
+        const buildings = parseOverpassToBuildings(data.elements);
+        if (!buildings.length) throw new Error('no building footprints');
+        return buildings;
+      } catch (e) {
+        const aborted = e && (e.name === 'AbortError' || /abort/i.test(String(e.message || e)));
+        const msg = aborted ? 'timeout' : ((e && e.message) || String(e));
+        errors.push(`${host}: ${msg}`);
+        console.warn('Overpass failed:', url, e);
+      }
+    }
+    throw new Error(errors.join(' | ') || 'Overpass failed on all mirrors');
   }
 
   function bearingDeg(from, to) {
@@ -414,76 +425,24 @@
       : offlineTemplate && offlineTemplate.radars
         ? offlineTemplate.radars
         : [];
-    const midLat = (start.lat + goal.lat) / 2;
-    const midLon = (start.lon + goal.lon) / 2;
-    const mPerDegLat = 111320;
-    const mPerDegLon = 111320 * Math.cos((midLat * Math.PI) / 180);
-    let dx = (goal.lon - start.lon) * mPerDegLon;
-    let dy = (goal.lat - start.lat) * mPerDegLat;
-    const len = Math.hypot(dx, dy) || 1;
-    dx /= len;
-    dy /= len;
-    const px = -dy;
-    const py = dx;
-    const along = 250;
-    const side = 500;
-
-    function offset(base, eM, nM) {
-      return {
-        lat: base.lat + nM / mPerDegLat,
-        lon: base.lon + eM / mPerDegLon,
-        alt: 5,
-      };
-    }
-
-    const usPos = offset(start, -dx * along + px * side, -dy * along + py * side);
-    const cnPos = offset(goal, dx * along - px * side, dy * along - py * side);
-    const mid = { lat: midLat, lon: midLon };
-
-    const usT =
-      list.find((r) => isUsRadar(r)) ||
-      list[0] || {
-        id: 'us_spy6_class',
-        label: 'US SPY-6–class (teaching, scaled) / 教学近似',
-        band: 'S (~3 GHz label)',
-        yaw_deg: 135,
-        pitch_deg: 8,
-        az_hpbw_deg: 12,
-        el_hpbw_deg: 10,
-        max_range_m: 1200,
-        snr_ref_linear: 200,
-        r_ref_m: 400,
-        sigma_ref_m2: 0.1,
-        snr_thresh_db: 10,
-        rcs_lo_factor: 1.0,
-      };
-    const cnT =
-      list.find((r) => isCnRadar(r)) ||
-      list[1] ||
-      list[0] || {
-        id: 'cn_jy27_class',
-        label: 'CN JY-27–class (teaching, scaled) / 教学近似',
-        band: 'VHF (~300 MHz label)',
-        yaw_deg: 315,
-        pitch_deg: 5,
-        az_hpbw_deg: 35,
-        el_hpbw_deg: 25,
-        max_range_m: 1500,
-        snr_ref_linear: 80,
-        r_ref_m: 500,
-        sigma_ref_m2: 0.1,
-        snr_thresh_db: 8,
-        rcs_lo_factor: 4.0,
-      };
-
-    function cloneAt(t, pos) {
-      const r = structuredClone(t);
-      r.position = pos;
-      r.yaw_deg = bearingDeg(pos, mid);
+    const layout = globalThis.DemoFraming
+      ? DemoFraming.teachingRadarPositions(start, goal)
+      : [];
+    // yaw_deg is ENU (0 = east). Compass bearing points the beam off the corridor.
+    function placed(role, index) {
+      const pred = role === 'us' ? isUsRadar : isCnRadar;
+      const tmpl = list.find(pred) || list[index] || list[0];
+      if (!tmpl) return null;
+      const lay = layout.find((s) => s.role === role);
+      const r = structuredClone(tmpl);
+      if (lay) {
+        r.position = { lat: lay.position.lat, lon: lay.position.lon, alt: lay.position.alt };
+        r.yaw_deg = lay.yawDeg;
+        r.pitch_deg = lay.pitchDeg;
+      }
       return r;
     }
-
-    return [cloneAt(usT, usPos), cloneAt(cnT, cnPos)];
+    return [placed('us', 0), placed('cn', 1)].filter(Boolean);
   }
 
   function makeRadarCanvas(isUs) {
@@ -726,29 +685,42 @@
         : Cesium.Color.fromCssColorString('#ffb347');
       const rangeM = Math.max(80, Number(r.max_range_m) || 800);
       const siteAlt = pos.alt || 0;
-      // Soft ground footprint + short translucent cylinder (lab-scaled range).
+      const halfAz = Math.max(6, Number(r.az_hpbw_deg) || 30) / 2;
+      // Draw the half-power fan the planner costs, not a full-range disc.
+      if (globalThis.DemoFraming) {
+        const ring = DemoFraming.sectorRing(pos.lat, pos.lon, Number(r.yaw_deg) || 0, rangeM, halfAz, 20);
+        const ringCartesian = ring.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 100));
+        viewer.entities.add({
+          name: (r.id || 'radar') + '-sector',
+          polygon: {
+            hierarchy: new Cesium.PolygonHierarchy(
+              ring.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat))
+            ),
+            height: 12,
+            extrudedHeight: 190,
+            material: accent.withAlpha(0.22),
+            outline: false,
+          },
+        });
+        viewer.entities.add({
+          name: (r.id || 'radar') + '-sector-edge',
+          polyline: {
+            positions: ringCartesian.concat(ringCartesian[0]),
+            width: 2,
+            material: accent.withAlpha(0.95),
+            arcType: Cesium.ArcType.NONE,
+          },
+        });
+      }
       viewer.entities.add({
-        name: (r.id || 'radar') + '-footprint',
-        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt),
-        ellipse: {
-          semiMajorAxis: rangeM,
-          semiMinorAxis: rangeM,
-          height: siteAlt,
-          material: accent.withAlpha(0.12),
-          outline: true,
-          outlineColor: accent.withAlpha(0.45),
-        },
-      });
-      viewer.entities.add({
-        name: (r.id || 'radar') + '-cone',
-        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt + 40),
+        name: (r.id || 'radar') + '-mast',
+        position: Cesium.Cartesian3.fromDegrees(pos.lon, pos.lat, siteAlt + 18),
         cylinder: {
-          length: 80,
-          topRadius: 8,
-          bottomRadius: Math.min(220, rangeM * 0.18),
-          material: accent.withAlpha(0.18),
-          outline: true,
-          outlineColor: accent.withAlpha(0.5),
+          length: 36,
+          topRadius: 4,
+          bottomRadius: 14,
+          material: accent.withAlpha(0.85),
+          outline: false,
         },
       });
       viewer.entities.add({
@@ -1038,22 +1010,126 @@
     }
   }
 
+  const BUNDLE_URL = './guomao_osm.json?v=ux3';
+  const OSM_CACHE_KEY = 'uav-osm-buildings-v1';
+
+  function buildingBlurb(map) {
+    const n = (map && map.buildings && map.buildings.length) || 0;
+    const src = (map && map.buildingSource) || 'sample';
+    if (src === 'live') return `实时 OSM（${n} 栋）`;
+    if (src === 'browser') return `本机上次成功的 OSM（${n} 栋）`;
+    if (src === 'bundled') return `随页面打包的国贸 OSM（${n} 栋，不是本次查询）`;
+    return `离线手绘样例（${n} 栋盒子，不是 OSM）`;
+  }
+
+  function rememberLiveOsm(bbox, buildings) {
+    try {
+      const payload = JSON.stringify({ bbox: bbox, buildings: buildings, savedAt: new Date().toISOString() });
+      if (payload.length < 4500000) localStorage.setItem(OSM_CACHE_KEY, payload);
+    } catch (e) {
+      console.warn('Could not save OSM cache', e);
+    }
+  }
+
+  function readOsmCache(bbox) {
+    try {
+      const raw = localStorage.getItem(OSM_CACHE_KEY);
+      if (!raw) return null;
+      const data = JSON.parse(raw);
+      if (!data || !bboxClose(bbox, data.bbox) || !Array.isArray(data.buildings) || !data.buildings.length) {
+        return null;
+      }
+      return data;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function commitCorridor(start, goal, bbox, buildings, source, background) {
+    const hadPath = lastPath.length > 0 || flight.active;
+    stopFlight();
+    lastPath = [];
+    removePathEntity();
+    baseMap.start = start;
+    baseMap.goal = goal;
+    baseMap.origin = { lat: start.lat, lon: start.lon, alt: 0 };
+    baseMap.coord_frame = 'wgs84';
+    baseMap.buildings = buildings;
+    // Search a corridor around start/goal. The Overpass bbox is wider so the
+    // city is drawn, but a multi-km box makes RRT* miss the radar detour.
+    const planBox = padBbox(start, goal, 900);
+    baseMap.bounds = {
+      min: { lat: planBox.minLat, lon: planBox.minLon, alt: 0 },
+      max: { lat: planBox.maxLat, lon: planBox.maxLon, alt: 200 },
+    };
+    baseMap._bbox = bbox;
+    baseMap.buildingSource = source;
+    baseMap.radars = placeTeachingRadars(
+      start,
+      goal,
+      (offlineTemplate && offlineTemplate.radars) || baseMap.radars
+    );
+    fillLatLon(baseMap);
+    const keepCamera = !!background || userSteered;
+    if (!background) userSteered = false;
+    rebuildCesiumScene(baseMap, keepCamera);
+    if (!keepCamera) userSteered = false;
+    return hadPath;
+  }
+
+  async function applyKnownBuildings(bbox, start, goal, background) {
+    if (!baseMap) return;
+    const same = baseMap._bbox && bboxClose(bbox, baseMap._bbox);
+    if (same && (baseMap.buildingSource === 'live' || baseMap.buildingSource === 'browser' || baseMap.buildingSource === 'bundled')) {
+      return;
+    }
+    const cached = readOsmCache(bbox);
+    if (cached) {
+      commitCorridor(start, goal, bbox, cached.buildings, 'browser', background);
+      setChip(`本机 OSM · ${cached.buildings.length} 栋 · 正在更新`, true);
+      return;
+    }
+    try {
+      const res = await fetch(BUNDLE_URL);
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || !bboxClose(bbox, data.bbox) || !Array.isArray(data.buildings) || data.buildings.length < 10) return;
+      commitCorridor(start, goal, bbox, data.buildings, 'bundled', background);
+      setChip(`打包的国贸 OSM · ${data.buildings.length} 栋 · 正在向 Overpass 更新`, true);
+    } catch (e) {
+      console.warn('Bundled OSM unavailable', e);
+    }
+  }
+
+  function overpassFailureText(err) {
+    const why = (err && err.message) ? err.message : String(err);
+    const shown = buildingBlurb(baseMap);
+    const sample = !baseMap || (baseMap.buildingSource || 'sample') === 'sample';
+    return (
+      `Overpass 失败：${why}\n` +
+      `画面仍是${shown}。没有把失败当成缓存。\n` +
+      `点「加载地图」会按表单里的经纬度再查一次。\n` +
+      `Overpass failed. Still showing ${sample ? 'the hand-drawn sample, not OSM' : 'the buildings named above'}. Retry 加载地图.`
+    );
+  }
+
   async function loadSampleAndShow() {
     setChip('正在打开离线样例…', true);
     setStats('Loading offline sample…', '');
     const res = await fetch('./sample_map.json');
     if (!res.ok) throw new Error('Cannot load sample_map.json');
     baseMap = await res.json();
+    baseMap.buildingSource = 'sample';
     offlineTemplate = structuredClone(baseMap);
     fillLatLon(baseMap);
     userSteered = false;
     rebuildCesiumScene(baseMap, false);
     const nB = (baseMap.buildings || []).length;
     const nR = filteredRadars(baseMap).length;
-    setChip('样例地图已显示 · OSM 建筑后台加载中', true);
+    setChip('手绘样例 · OSM 加载中', true);
     setStats(
-      `样例已就绪，可直接规划 · buildings: ${nB}  radars: ${nR}\n` +
-        `OSM 在后台加载（Overpass 慢时不必等待）`,
+      `手绘样例已就绪，可直接规划 · buildings: ${nB}（不是 OSM）  radars: ${nR}\n` +
+        `正在向 Overpass 拉取国贸一带的建筑…`,
       'ok'
     );
   }
@@ -1090,56 +1166,34 @@
 
     const seq = ++loadSeq;
     const { start, goal } = readStartGoalFromInputs();
+    const bbox = padBbox(start, goal, 1500);
     if (!background) {
       setChip('正在从 OSM 加载这一带的建筑…', true);
-      setStats('正在从 OSM Overpass 加载建筑…\n样例场景仍可查看；规划会在加载完成后使用新建筑。', '');
+      setStats('正在从 OSM Overpass 加载建筑…\n当前画面可先规划；成功后会换成这一带的建筑。', '');
     }
     if ($('loadMapBtn')) $('loadMapBtn').disabled = true;
 
     try {
-      const bbox = padBbox(start, goal, 1500);
-      const osmJob = fetchOsmBuildings(
-        bbox.minLat,
-        bbox.minLon,
-        bbox.maxLat,
-        bbox.maxLon
-      );
-      osmJob.catch(() => {});
+      await applyKnownBuildings(bbox, start, goal, background);
+      if (seq !== loadSeq) return;
       const buildings = await withTimeout(
-        osmJob,
-        22000,
-        'Overpass 超时（22s）。仍显示当前建筑，可稍后重试「加载地图」。'
+        fetchOsmBuildings(
+          bbox.minLat,
+          bbox.minLon,
+          bbox.maxLat,
+          bbox.maxLon,
+          () => seq !== loadSeq
+        ),
+        50000,
+        'Overpass 超时（50s，多个镜像都没有在时限内返回建筑）。'
       );
       if (seq !== loadSeq) return;
       if (!buildings.length) throw new Error('Overpass returned no building footprints');
 
-      const hadPath = lastPath.length > 0 || flight.active;
-      stopFlight();
-      lastPath = [];
-      removePathEntity();
-      baseMap.start = start;
-      baseMap.goal = goal;
-      baseMap.origin = { lat: start.lat, lon: start.lon, alt: 0 };
-      baseMap.coord_frame = 'wgs84';
-      baseMap.buildings = buildings;
-      baseMap.bounds = {
-        min: { lat: bbox.minLat, lon: bbox.minLon, alt: 0 },
-        max: { lat: bbox.maxLat, lon: bbox.maxLon, alt: 200 },
-      };
-      baseMap.radars = placeTeachingRadars(
-        start,
-        goal,
-        (offlineTemplate && offlineTemplate.radars) || baseMap.radars
-      );
-
-      fillLatLon(baseMap);
-      // Background refresh of the same corridor should not yank a camera the user moved.
-      const keepCamera = background || userSteered;
-      if (!background) userSteered = false;
-      rebuildCesiumScene(baseMap, keepCamera);
-      if (!keepCamera) userSteered = false;
+      const hadPath = commitCorridor(start, goal, bbox, buildings, 'live', background);
+      rememberLiveOsm(bbox, buildings);
       const nR = filteredRadars(baseMap).length;
-      setChip(`OSM · ${buildings.length} 栋建筑`, true);
+      setChip(`OSM 实时 · ${buildings.length} 栋`, true);
       setStats(
         `OSM 已加载 · buildings: ${buildings.length}  radars: ${nR}\n` +
           `bbox ≈ ${(bbox.maxLat - bbox.minLat).toFixed(3)}° lat × ` +
@@ -1150,14 +1204,10 @@
       );
     } catch (e) {
       if (seq !== loadSeq) return;
+      if (e && e.message === 'cancelled') return;
       console.error(e);
-      setChip('OSM 加载失败 · 仍显示当前建筑', true);
-      setStats(
-        `Overpass 失败（保留上次建筑）: ${e.message || e}\n` +
-          `可稍后重试「加载地图」。样例场景可以先规划。`,
-        'err'
-      );
-      if (baseMap) fillLatLon(baseMap);
+      setChip(`OSM 加载失败 · ${buildingBlurb(baseMap)}`, true);
+      setStats(overpassFailureText(e), 'err');
     } finally {
       if (seq === loadSeq && $('loadMapBtn')) $('loadMapBtn').disabled = false;
     }
@@ -1277,7 +1327,13 @@
       onLoadMap({ background: false }).catch((e) => setStats(String(e), 'err'));
     });
     for (const id of ['radarUs', 'radarCn']) {
-      $(id).addEventListener('change', refreshRadarVisibility);
+      $(id).addEventListener('change', () => {
+        if (lastPath.length && planBtn && !planBtn.disabled) {
+          onPlan().catch((e) => setStats(String(e), 'err'));
+        } else {
+          refreshRadarVisibility();
+        }
+      });
     }
     const flyHandler = () => {
       onFlyToggle().catch((e) => setStats(String(e), 'err'));
