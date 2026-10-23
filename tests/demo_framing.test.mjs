@@ -151,6 +151,28 @@ test('chase lookAt stays locked until unlockCamera flushes the world pose', () =
   assert.equal(cam.pose.h, chase.h);
 });
 
+const R = 6378137;
+
+test('city framing is not pulled back to a centered whole-Earth view', () => {
+  assert.equal(F.shouldRecenterGlobe(R + 706, 0.528, R + 700), false);
+  assert.equal(F.shouldRecenterGlobe(R + 1.4e6, 0.718, R + 1.2e6), false);
+});
+
+test('zooming out until the whole Earth shows recenters an off-axis view', () => {
+  // Measured from the oblique Guomao camera: at ~8,000 km the geocenter
+  // sits on the bottom edge (alignment 0.929); at ~28,000 km it is still
+  // ~160 px below the canvas center (alignment 0.987).
+  assert.equal(F.shouldRecenterGlobe(R + 8.26e6, 0.929, R + 1.4e6), true);
+  assert.equal(F.shouldRecenterGlobe(R + 2.76e7, 0.987, R + 8e6), true);
+  assert.equal(F.shouldRecenterGlobe(R + 2.76e7, 0.999, R + 8e6), false);
+});
+
+test('spinning or tilting the whole Earth does not snap the camera back', () => {
+  const far = R + 2e7;
+  assert.equal(F.shouldRecenterGlobe(far, 0.9, far), false);
+  assert.equal(F.shouldRecenterGlobe(far * 0.99, 0.9, far), false);
+});
+
 test('footprints drop a repeated closing vertex', () => {
   const fp = F.footprintFromLatLonList([
     { lat: 1, lon: 2 },
@@ -174,14 +196,25 @@ test('demo page shows the sample globe before Overpass and resizes the viewer', 
   assert.match(app, /withTimeout\(/);
   assert.equal((app.match(/spinner\.classList\.add\(/g) || []).length, 1);
   assert.equal(app.includes('midLat - 0.006'), false);
-  assert.match(html, /app\.js\?v=ux4/);
-  assert.match(html, /framing\.js\?v=ux4/);
-  assert.match(html, /planner\.js\?v=ux4/);
-  assert.match(app, /planner_worker\.js\?v=ux4/);
-  assert.match(app, /guomao_osm\.json\?v=ux4/);
+  assert.match(html, /app\.js\?v=ux5/);
+  assert.match(html, /framing\.js\?v=ux5/);
+  assert.match(html, /planner\.js\?v=ux5/);
+  assert.match(app, /planner_worker\.js\?v=ux5/);
+  assert.match(app, /guomao_osm\.json\?v=ux5/);
   const worker = fs.readFileSync(new URL('../docs/planner_worker.js', import.meta.url), 'utf8');
-  assert.match(worker, /planner\.js\?v=ux4/);
-  assert.match(worker, /\?v=ux4/);
+  assert.match(worker, /planner\.js\?v=ux5/);
+  assert.match(worker, /\?v=ux5/);
+  assert.match(app, /shouldRecenterGlobe/);
+  assert.match(app, /moveEnd\.addEventListener\(maybeCenterGlobe\)/);
+  assert.equal(app.includes('enableInputs = false'), false);
+  assert.equal(app.includes('enableRotate = false'), false);
+  assert.equal(app.includes('enableZoom = false'), false);
+  assert.equal(app.includes('enableTranslate = false'), false);
+  const centerFn = app.slice(app.indexOf('function maybeCenterGlobe'), app.indexOf('function clearMapEntities'));
+  assert.match(centerFn, /followCam/);
+  assert.match(centerFn, /flight\.active/);
+  assert.match(centerFn, /setView\(/);
+  assert.equal(centerFn.includes('.lookAt('), false);
   assert.match(app, /unlockCamera/);
   assert.equal(app.includes('lookAtTransform(Cesium.Matrix4.IDENTITY)'), false);
   const commit = app.slice(app.indexOf('function commitCorridor'), app.indexOf('async function applyKnownBuildings'));

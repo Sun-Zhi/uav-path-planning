@@ -18,6 +18,8 @@
   let lastTick = performance.now();
   let buildingPrimitive = null;
   let userSteered = false;
+  let centeringGlobe = false;
+  let globeDistanceM = 0;
   let followCam = false;
   let loadSeq = 0;
   let resizeTimer = 0;
@@ -54,7 +56,7 @@
   let planToken = 0;
 
   function runPlan(mapJson, algo, informed, timeoutMs) {
-    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux4');
+    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux5');
     const worker = planWorker;
     const id = ++planToken;
     return new Promise((resolve, reject) => {
@@ -557,6 +559,7 @@
     if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleResize);
 
     viewer.resize();
+    viewer.camera.moveEnd.addEventListener(maybeCenterGlobe);
     frameCorridor({
       start: { lat: 39.908, lon: 116.46, alt: 90 },
       goal: { lat: 39.912, lon: 116.455, alt: 110 },
@@ -664,6 +667,54 @@
   function releaseCameraLock() {
     if (!viewer || !globalThis.DemoFraming) return;
     DemoFraming.unlockCamera(viewer.camera, Cesium.Matrix4.IDENTITY);
+  }
+
+  // Whole-Earth zoom follows the oblique view ray, so the planet's center
+  // drops to the bottom of the canvas and trackball drag cannot slide it
+  // back. Aim at the geocenter from the same distance. setView leaves the
+  // transform at identity, so rotate, pan, and zoom stay available.
+  function maybeCenterGlobe() {
+    if (centeringGlobe || !viewer || viewer.isDestroyed() || flight.active || followCam) return;
+    if (!globalThis.DemoFraming) return;
+    const cam = viewer.camera;
+    if (!Cesium.Matrix4.equalsEpsilon(cam.transform, Cesium.Matrix4.IDENTITY, 1e-5)) {
+      releaseCameraLock();
+    }
+    const pos = cam.positionWC;
+    const dist = Cesium.Cartesian3.magnitude(pos);
+    const toCenter = Cesium.Cartesian3.normalize(
+      Cesium.Cartesian3.negate(pos, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3()
+    );
+    const alignment = Cesium.Cartesian3.dot(cam.directionWC, toCenter);
+    const previous = globeDistanceM;
+    globeDistanceM = dist;
+    if (!DemoFraming.shouldRecenterGlobe(dist, alignment, previous)) return;
+    const radial = Cesium.Cartesian3.normalize(pos, new Cesium.Cartesian3());
+    const destination = Cesium.Cartesian3.multiplyByScalar(radial, dist, new Cesium.Cartesian3());
+    let pole = Cesium.Cartesian3.UNIT_Z;
+    if (Math.abs(Cesium.Cartesian3.dot(pole, radial)) > 0.95) pole = Cesium.Cartesian3.UNIT_X;
+    const right = Cesium.Cartesian3.normalize(
+      Cesium.Cartesian3.cross(radial, pole, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3()
+    );
+    const up = Cesium.Cartesian3.normalize(
+      Cesium.Cartesian3.cross(right, radial, new Cesium.Cartesian3()),
+      new Cesium.Cartesian3()
+    );
+    centeringGlobe = true;
+    try {
+      cam.setView({
+        destination: destination,
+        orientation: {
+          direction: Cesium.Cartesian3.negate(radial, new Cesium.Cartesian3()),
+          up: up,
+        },
+      });
+    } finally {
+      centeringGlobe = false;
+      globeDistanceM = Cesium.Cartesian3.magnitude(cam.positionWC);
+    }
   }
 
   function clearMapEntities() {
@@ -1015,7 +1066,7 @@
     }
   }
 
-  const BUNDLE_URL = './guomao_osm.json?v=ux4';
+  const BUNDLE_URL = './guomao_osm.json?v=ux5';
   const OSM_CACHE_KEY = 'uav-osm-buildings-v1';
 
   function buildingBlurb(map) {

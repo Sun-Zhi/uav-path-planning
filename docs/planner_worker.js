@@ -1,5 +1,5 @@
 /* Plans off the UI thread so a long WASM call cannot freeze the page. */
-importScripts('planner.js?v=ux4');
+importScripts('planner.js?v=ux5');
 
 let modulePromise = null;
 
@@ -12,7 +12,7 @@ self.onmessage = async (ev) => {
         throw new Error('createPlanner not found');
       }
       modulePromise = createPlanner({
-        locateFile: (path) => (path.endsWith('.wasm') ? path + '?v=ux4' : path),
+        locateFile: (path) => (path.endsWith('.wasm') ? path + '?v=ux5' : path),
       });
     }
     const mod = await modulePromise;
