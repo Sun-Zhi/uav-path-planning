@@ -87,6 +87,25 @@ int main() {
   assert(legacy.start.x == 5 && legacy.goal.x == 40);
   assert(legacy.buildings.size() == 1);
 
+  // Empty / missing footprint buildings must be skipped
+  const std::string empty_fp_json = R"({
+    "coord_frame": "wgs84",
+    "origin": {"lat": 39.908, "lon": 116.460, "alt": 0},
+    "bounds": {
+      "min": {"lat": 39.905, "lon": 116.455, "alt": 0},
+      "max": {"lat": 39.912, "lon": 116.465, "alt": 150}
+    },
+    "start": {"lat": 39.908, "lon": 116.460, "alt": 90},
+    "goal":  {"lat": 39.910, "lon": 116.458, "alt": 100},
+    "buildings": [
+      {"name": "empty", "height_m": 50, "footprint": []},
+      {"name": "missing", "height_m": 50}
+    ],
+    "radars": []
+  })";
+  MapConfig empty_cfg = load_map_json_string(empty_fp_json);
+  assert(empty_cfg.buildings.empty());
+
   // File load Guomao sample if present
   try {
     MapConfig file_cfg = load_map_json("configs/sample_map.json");

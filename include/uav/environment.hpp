@@ -325,6 +325,8 @@ inline MapConfig load_map_json_string_geo(const std::string& s) {
             }
           }
         }
+        // Skip empty/missing footprints: avoid degenerate obstacles at origin.
+        if (ring.empty()) continue;
         AABB box = aabb_from_footprint(cfg.origin, ring, height_m);
         box.name = extract_string(obj, "name");
         box.hard_obstacle = true;
