@@ -419,9 +419,21 @@ function setFpvHud(on) {
   hud.classList.toggle('show', on);
 }
 
+function setFlyButtons(flying) {
+  const label = flying ? '■ 停止飞行' : '▶ 模拟飞行（第一视角）';
+  const fabLabel = flying ? '■ 停止' : '▶ 模拟飞行';
+  for (const id of ['flyBtn', 'flyFab']) {
+    const el = $(id);
+    if (!el) continue;
+    el.textContent = id === 'flyFab' ? fabLabel : label;
+    el.classList.toggle('flying', flying);
+  }
+}
+
 function stopFlight(restoreOrbit = true) {
   flight.active = false;
   flight.t = 0;
+  flight._hold = 0;
   if (droneGroup) droneGroup.visible = false;
   setFpvHud(false);
   controls.enabled = true;
@@ -432,28 +444,37 @@ function stopFlight(restoreOrbit = true) {
     camera.updateProjectionMatrix();
     controls.update();
   }
-  const flyBtn = $('flyBtn');
-  if (flyBtn) flyBtn.textContent = 'Fly FPV / 第一视角';
+  setFlyButtons(false);
 }
 
 function startFlight(points) {
   if (!points || points.length < 2) {
-    setStats('No path to fly / 没有可飞路径', 'err');
-    return;
+    setStats('没有可飞路径，请先点「规划」\nNo path — Plan first', 'err');
+    return false;
   }
   const track = buildFlightTrack(points);
-  flight = { active: true, t: 0, ...track, speed: Math.max(18, track.total / 12) };
+  // ~10s flight, minimum noticeable speed
+  const speed = Math.max(12, track.total / 10);
+  flight = { active: true, t: 0, ...track, speed, _hold: 0 };
   savedOrbit = {
     pos: camera.position.clone(),
     target: controls.target.clone(),
   };
   controls.enabled = false;
-  camera.fov = 72;
+  camera.fov = 75;
+  camera.near = 0.05;
   camera.updateProjectionMatrix();
-  if (droneGroup) droneGroup.visible = false; // pure FPV — camera is the aircraft
+  if (droneGroup) droneGroup.visible = false;
   setFpvHud(true);
-  const flyBtn = $('flyBtn');
-  if (flyBtn) flyBtn.textContent = 'Stop FPV / 退出';
+  setFlyButtons(true);
+  // snap camera to path start immediately so motion is obvious
+  const here = sampleTrack(flight, 0);
+  const ahead = sampleTrack(flight, Math.min(6, flight.total));
+  camera.position.copy(here.pos);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(ahead.pos);
+  setStats('模拟飞行中（第一视角）… 再点按钮可停止', 'ok');
+  return true;
 }
 
 function updateFlight(dt) {
@@ -587,7 +608,7 @@ async function onPlan() {
         `waypoints: ${result.waypoints}\n` +
         `nodes: ${result.nodes}\n` +
         `time: ${result.time_ms.toFixed(2)} ms\n` +
-        `→ 自动进入第一视角飞行`,
+        `→ 点击「模拟飞行」或等待自动起飞`,
       'ok'
     );
     startFlight(lastPath);
@@ -612,13 +633,16 @@ function onReset() {
   setStats('Reset to sample map. Click Plan.', '');
 }
 
-function onFlyToggle() {
+async function onFlyToggle() {
   if (flight.active) {
     stopFlight(true);
+    setStats('已停止模拟飞行', '');
     return;
   }
   if (!lastPath.length) {
-    setStats('先点 Plan 生成路径 / Plan a path first', 'err');
+    setStats('尚无路径，先自动规划再飞…', '');
+    await onPlan(); // onPlan already starts flight on success
+    if (!flight.active && lastPath.length >= 2) startFlight(lastPath);
     return;
   }
   startFlight(lastPath);
@@ -636,7 +660,10 @@ async function main() {
   setStats(`Ready (${nRad} radars). Click Plan / 点击规划.`, '');
   planBtn.addEventListener('click', onPlan);
   $('resetBtn').addEventListener('click', onReset);
-  $('flyBtn').addEventListener('click', onFlyToggle);
+  const flyHandler = () => { onFlyToggle().catch((e) => setStats(String(e), 'err')); };
+  if ($('flyBtn')) $('flyBtn').addEventListener('click', flyHandler);
+  if ($('flyFab')) $('flyFab').addEventListener('click', flyHandler);
+  setFlyButtons(false);
   ensurePlanner().catch((e) => console.warn('WASM preload:', e));
 }
 

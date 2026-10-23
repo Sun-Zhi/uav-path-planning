@@ -119,6 +119,42 @@
       z-index: 3;
     }
     #spinner.show { display: flex; }
+
+    button.fly-primary {
+      width: 100%;
+      margin-top: 10px;
+      background: linear-gradient(180deg, #3dd68c, #22a86a);
+      color: #04140c;
+      font-size: 1rem;
+      font-weight: 750;
+      padding: 12px 10px;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      box-shadow: 0 0 0 1px rgba(61,214,140,0.35), 0 8px 24px rgba(34,168,106,0.25);
+    }
+    button.fly-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.fly-primary.flying {
+      background: linear-gradient(180deg, #f0b429, #d4890a);
+      color: #1a1200;
+    }
+    #flyFab {
+      position: absolute;
+      right: 18px;
+      bottom: 18px;
+      z-index: 5;
+      border: none;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font-weight: 750;
+      font-size: 0.95rem;
+      cursor: pointer;
+      background: #3dd68c;
+      color: #04140c;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+    }
+    #flyFab.flying { background: #f0b429; color: #1a1200; }
+
     #fpvHud {
       display: none;
       position: absolute; inset: 0;
@@ -197,9 +233,7 @@
         <button id="planBtn" type="button">Plan / 规划</button>
         <button id="resetBtn" type="button">Reset</button>
       </div>
-      <div class="btns" style="margin-top:8px">
-        <button id="flyBtn" type="button" style="background:#2a3a4f;color:#e7ecf3">Fly FPV / 第一视角</button>
-      </div>
+      <button id="flyBtn" type="button" class="fly-primary">▶ 模拟飞行（第一视角）</button>
 
       <div id="stats">Load map, then Plan.</div>
 
@@ -217,6 +251,7 @@
     <main id="view">
       <div id="canvas-host"></div>
       <div id="spinner">Planning…</div>
+      <button id="flyFab" type="button">▶ 模拟飞行</button>
       <div id="fpvHud">
         <div id="fpvTitle">UAV FPV · 无人机第一视角</div>
         <div class="cross"></div>
@@ -234,6 +269,6 @@
   }
   </script>
   <script src="./planner.js"></script>
-  <script type="module" src="./app.js?v=fpv3"></script>
+  <script type="module" src="./app.js?v=fly5"></script>
 </body>
 </html>
