@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>UAV Path Planning Demo / 无人机航迹规划演示</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+  <link rel="preconnect" href="https://server.arcgisonline.com" crossorigin />
+  <link rel="dns-prefetch" href="https://overpass-api.de" />
+  <link rel="dns-prefetch" href="https://overpass.kumi.systems" />
   <script>
     window.CESIUM_BASE_URL = 'https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/';
   </script>
@@ -26,9 +30,10 @@
       font-family: "Segoe UI", system-ui, sans-serif;
       overflow: hidden;
     }
-    #app { display: flex; height: 100%; }
+    #app { display: flex; height: 100%; min-height: 0; }
     #sidebar {
-      width: 300px; min-width: 260px;
+      width: 280px; min-width: 200px;
+      flex: 0 0 auto;
       background: var(--panel);
       border-right: 1px solid var(--border);
       padding: 16px 14px;
@@ -115,10 +120,19 @@
       border-radius: 2px; margin-right: 4px; vertical-align: middle;
     }
     #view {
-      flex: 1; position: relative; background: #080b10;
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 0;
+      position: relative;
+      overflow: hidden;
+      background: #080b10;
     }
     #cesiumContainer {
-      width: 100%; height: 100%;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
     }
     #cesiumContainer .cesium-viewer-bottom {
       display: none;
@@ -133,6 +147,35 @@
       pointer-events: none;
     }
     #spinner.show { display: flex; }
+    #mapChip {
+      display: none;
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 4;
+      max-width: min(420px, calc(100% - 24px));
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: rgba(13, 18, 26, 0.88);
+      border: 1px solid rgba(45, 58, 79, 0.95);
+      color: var(--text);
+      font-size: 0.78rem;
+      line-height: 1.35;
+      pointer-events: none;
+    }
+    #mapChip.show { display: block; }
+
+    @media (max-width: 820px), (max-height: 520px) {
+      #app { flex-direction: column; }
+      #sidebar {
+        width: 100%;
+        min-width: 0;
+        max-height: 32vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+      }
+      #view { min-height: 180px; }
+    }
 
     button.fly-primary {
       width: 100%;
@@ -235,7 +278,7 @@
         <div><span class="swatch" style="background:#ffb347"></span>CN JY-27 类雷达（教学）</div>
         <div><span class="swatch" style="background:#3dd68c"></span>Start · <span class="swatch" style="background:#e040a0"></span>Goal</div>
         <div><span class="swatch" style="background:#40d0e0"></span>A* path · <span class="swatch" style="background:#f0d040"></span>RRT* path</div>
-        规划后点「模拟飞行」· 拖拽旋转 · 滚轮缩放
+        打开即可看到样例地球，OSM 建筑在后台加载。规划后点「模拟飞行」（镜头跟随）。拖拽旋转 · 滚轮可拉远到整颗地球。
       </div>
       <p class="disclaimer">
         Map data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener" style="color:#9aa8bc">OpenStreetMap</a> contributors.
@@ -247,13 +290,84 @@
     </aside>
     <main id="view">
       <div id="cesiumContainer"></div>
+      <div id="mapChip" class="show">正在打开地球…</div>
       <div id="spinner">Planning…</div>
       <button id="flyFab" type="button">▶ 模拟飞行</button>
     </main>
   </div>
 
+  <script>
+    /* Default Guomao bbox = padBbox(sample start/goal, 1500 m). Starts before Cesium downloads. */
+    window.__osmPrefetchMeta = {
+      minLat: 39.89452533237514,
+      minLon: 116.43743320297743,
+      maxLat: 39.92547466762486,
+      maxLon: 116.47756679702256,
+    };
+    window.__osmPrefetch = (function () {
+      var b = window.__osmPrefetchMeta;
+      var query =
+        '[out:json][timeout:18];\n' +
+        '(\n' +
+        '  way["building"](' + b.minLat + ',' + b.minLon + ',' + b.maxLat + ',' + b.maxLon + ');\n' +
+        '  relation["building"](' + b.minLat + ',' + b.minLon + ',' + b.maxLat + ',' + b.maxLon + ');\n' +
+        ');\n' +
+        'out geom;';
+      var body = 'data=' + encodeURIComponent(query);
+      var endpoints = [
+        'https://overpass-api.de/api/interpreter',
+        'https://overpass.kumi.systems/api/interpreter',
+        'https://lz4.overpass-api.de/api/interpreter',
+      ];
+      var controllers = endpoints.map(function () { return new AbortController(); });
+      function hit(url, i) {
+        return new Promise(function (resolve, reject) {
+          setTimeout(function () {
+            var timer = setTimeout(function () { controllers[i].abort(); }, 18000);
+            fetch(url, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                Accept: 'application/json',
+              },
+              body: body,
+              signal: controllers[i].signal,
+            }).then(function (res) {
+              if (!res.ok) throw new Error('HTTP ' + res.status);
+              return res.json();
+            }).then(function (data) {
+              clearTimeout(timer);
+              if (!data || !Array.isArray(data.elements)) throw new Error('invalid Overpass JSON');
+              resolve(data);
+            }).catch(function (err) {
+              clearTimeout(timer);
+              reject(err);
+            });
+          }, i * 2200);
+        });
+      }
+      var tasks = endpoints.map(hit);
+      function finish(ok, value) {
+        controllers.forEach(function (c) { try { c.abort(); } catch (e) {} });
+        if (ok) return value;
+        throw value;
+      }
+      var raced = (typeof Promise.any === 'function')
+        ? Promise.any(tasks)
+        : new Promise(function (resolve, reject) {
+            var fails = 0;
+            tasks.forEach(function (p) {
+              p.then(resolve, function () {
+                if (++fails === tasks.length) reject(new Error('Overpass failed on all mirrors'));
+              });
+            });
+          });
+      return raced.then(function (data) { return finish(true, data); }, function (err) { return finish(false, err); });
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/cesium@1.122.0/Build/Cesium/Cesium.js"></script>
+  <script src="./framing.js?v=ux1"></script>
   <script src="./planner.js?v=rrt-scale1"></script>
-  <script src="./app.js?v=cesium4"></script>
+  <script src="./app.js?v=ux1"></script>
 </body>
 </html>
