@@ -29,6 +29,15 @@ uav-path-planning/
 ├── PAPERS.md
 ├── README.md
 ├── configs/sample_map.json
+├── docs/                 # GitHub Pages demo
+│   ├── index.html
+│   ├── app.js
+│   ├── sample_map.json
+│   ├── planner.js
+│   └── planner.wasm
+├── web/
+│   ├── planner_bind.cpp  # Embind glue
+│   └── build.sh          # Emscripten build
 ├── include/uav/
 │   ├── vec3.hpp
 │   ├── aabb.hpp
@@ -68,6 +77,30 @@ ctest --test-dir build --output-on-failure
 
 ---
 
+## 浏览器演示 / Browser demo (WASM)
+
+在线页面（GitHub Pages）：
+
+**https://sun-zhi.github.io/uav-path-planning/**
+
+本地预览（需先有 `docs/planner.{js,wasm}`）：
+
+```bash
+cd docs
+python3 -m http.server 8080
+# 打开 http://localhost:8080/
+```
+
+重新编译 WASM（需 [Emscripten](https://emscripten.org/)；脚本会在缺少时安装到 `/workspace/emsdk`）：
+
+```bash
+./web/build.sh
+```
+
+页面用 Three.js 显示样例楼宇与风险区，并在浏览器内调用 WASM 版 A\* / RRT\*（可改起点终点）。
+
+---
+
 ## 算法对照（本 demo 设计动机）
 
 与 Zammit & van Kampen (AIAA GNC 2018) 类似，本程序在同一张城市样例图上同时跑 A\* 与 RRT\*：
@@ -81,7 +114,7 @@ ctest --test-dir build --output-on-failure
 
 ## English (short)
 
-Build with CMake (C++17). Run `./build/uav_planner --demo`. Implements risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed ellipsoid sampling) on AABB buildings + soft EW/radar zones. See `PAPERS.md` for citations. No ROS. Exit 0 on success.
+Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser WASM demo: https://sun-zhi.github.io/uav-path-planning/ (rebuild with `./web/build.sh`). Implements risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed ellipsoid sampling) on AABB buildings + soft EW/radar zones. See `PAPERS.md` for citations. No ROS. Exit 0 on success.
 
 ---
 
