@@ -9,7 +9,6 @@
 
   let baseMap = null;
   let offlineTemplate = null;
-  let plannerModule = null;
   let viewer = null;
   let pathEntity = null;
   let droneEntity = null;
@@ -17,10 +16,79 @@
   let lastAlgo = 'astar';
   let flight = { active: false, t: 0, pts: [], dist: [], total: 0, speed: 40, _hold: 0 };
   let lastTick = performance.now();
+  let buildingPrimitive = null;
+  let userSteered = false;
+  let followCam = false;
+  let loadSeq = 0;
+  let resizeTimer = 0;
 
   function setStats(text, cls) {
     statsEl.textContent = text;
     statsEl.className = cls || '';
+  }
+
+  function setChip(text, show) {
+    const el = $('mapChip');
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('show', !!show && !!text);
+  }
+
+  function withTimeout(promise, ms, message) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), ms);
+      Promise.resolve(promise).then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (err) => {
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  let planWorker = null;
+  let planToken = 0;
+
+  function runPlan(mapJson, algo, informed, timeoutMs) {
+    if (!planWorker) planWorker = new Worker('planner_worker.js?v=ux2');
+    const worker = planWorker;
+    const id = ++planToken;
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (fn, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        worker.removeEventListener('message', onMsg);
+        worker.removeEventListener('error', onErr);
+        fn(value);
+      };
+      const timer = setTimeout(() => {
+        try { worker.terminate(); } catch (e) { /* already dead */ }
+        if (planWorker === worker) planWorker = null;
+        finish(reject, new Error(
+          '规划超时（' + Math.round(timeoutMs / 1000) +
+            's），已中止并恢复页面。\nPlanning timed out and was stopped.'
+        ));
+      }, timeoutMs);
+      const onMsg = (ev) => {
+        if (!ev.data || ev.data.id !== id) return;
+        if (ev.data.error) finish(reject, new Error(ev.data.error));
+        else finish(resolve, ev.data.raw);
+      };
+      const onErr = (ev) => {
+        try { worker.terminate(); } catch (e) { /* already dead */ }
+        if (planWorker === worker) planWorker = null;
+        finish(reject, new Error(ev.message || 'Planner worker failed'));
+      };
+      worker.addEventListener('message', onMsg);
+      worker.addEventListener('error', onErr);
+      worker.postMessage({ id: id, mapJson: mapJson, algo: algo, informed: informed });
+    });
   }
 
   function num(id, fallback) {
@@ -146,6 +214,9 @@
   }
 
   function wayToFootprint(way, nodes) {
+    if (Array.isArray(way.geometry) && way.geometry.length && globalThis.DemoFraming) {
+      return DemoFraming.footprintFromLatLonList(way.geometry);
+    }
     const fp = [];
     for (const id of way.nodes || []) {
       const n = nodes.get(id);
@@ -160,6 +231,15 @@
       if (a.lat === b.lat && a.lon === b.lon) fp.pop();
     }
     return fp;
+  }
+
+  function memberFootprint(member, ways, nodes) {
+    if (Array.isArray(member.geometry) && member.geometry.length && globalThis.DemoFraming) {
+      return DemoFraming.footprintFromLatLonList(member.geometry);
+    }
+    const w = ways.get(member.ref);
+    if (!w) return [];
+    return wayToFootprint(w, nodes);
   }
 
   function parseOverpassToBuildings(elements) {
@@ -183,16 +263,14 @@
       for (const m of e.members || []) {
         if (m.type !== 'way') continue;
         if (m.role && m.role !== 'outer') continue;
-        const w = ways.get(m.ref);
-        if (!w) continue;
-        const fp = wayToFootprint(w, nodes);
+        const fp = memberFootprint(m, ways, nodes);
         if (fp.length < 3) continue;
         const area = footprintAreaM2(fp);
         if (area > bestArea) {
           bestArea = area;
           best = fp;
         }
-        usedWays.add(m.ref);
+        if (m.ref != null) usedWays.add(m.ref);
       }
       if (!best) continue;
       buildings.push({
@@ -224,9 +302,14 @@
     }));
   }
 
-  async function postOverpass(url, query) {
+  async function postOverpass(url, query, signal) {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 35000);
+    const timer = setTimeout(() => ctrl.abort(), 18000);
+    const onAbort = () => ctrl.abort();
+    if (signal) {
+      if (signal.aborted) ctrl.abort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
     try {
       const res = await fetch(url, {
         method: 'POST',
@@ -248,33 +331,72 @@
       return data;
     } finally {
       clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
     }
   }
 
-  async function fetchOsmBuildings(minLat, minLon, maxLat, maxLon) {
-    const query =
-      `[out:json][timeout:25];\n` +
+  function overpassQuery(minLat, minLon, maxLat, maxLon) {
+    return (
+      `[out:json][timeout:18];\n` +
       `(\n` +
       `  way["building"](${minLat},${minLon},${maxLat},${maxLon});\n` +
       `  relation["building"](${minLat},${minLon},${maxLat},${maxLon});\n` +
       `);\n` +
-      `out body; >; out skel qt;`;
+      `out geom;`
+    );
+  }
+
+  function bboxClose(a, b) {
+    if (!a || !b) return false;
+    const eps = 2e-4;
+    return ['minLat', 'minLon', 'maxLat', 'maxLon'].every(
+      (k) => Math.abs(Number(a[k]) - Number(b[k])) < eps
+    );
+  }
+
+  async function firstOverpass(query) {
     const endpoints = [
       'https://overpass-api.de/api/interpreter',
       'https://overpass.kumi.systems/api/interpreter',
       'https://lz4.overpass-api.de/api/interpreter',
     ];
-    let lastErr = null;
-    for (const url of endpoints) {
+    const controllers = endpoints.map(() => new AbortController());
+    const tasks = endpoints.map((url, i) => new Promise((resolve, reject) => {
+      setTimeout(() => {
+        postOverpass(url, query, controllers[i].signal).then(resolve, (e) => {
+          console.warn('Overpass failed:', url, e);
+          reject(e);
+        });
+      }, i * 2200);
+    }));
+    try {
+      if (typeof Promise.any === 'function') return await Promise.any(tasks);
+      return await new Promise((resolve, reject) => {
+        let fails = 0;
+        tasks.forEach((p) => p.then(resolve, () => {
+          if (++fails === tasks.length) reject(new Error('Overpass failed on all mirrors'));
+        }));
+      });
+    } finally {
+      controllers.forEach((c) => c.abort());
+    }
+  }
+
+  async function fetchOsmBuildings(minLat, minLon, maxLat, maxLon) {
+    const bbox = { minLat, minLon, maxLat, maxLon };
+    const pre = globalThis.__osmPrefetch;
+    const meta = globalThis.__osmPrefetchMeta;
+    if (pre && bboxClose(bbox, meta)) {
+      globalThis.__osmPrefetch = null;
       try {
-        const data = await postOverpass(url, query);
+        const data = await pre;
         return parseOverpassToBuildings(data.elements);
       } catch (e) {
-        lastErr = e;
-        console.warn('Overpass failed:', url, e);
+        console.warn('OSM prefetch failed, retrying:', e);
       }
     }
-    throw lastErr || new Error('Overpass failed on all mirrors');
+    const data = await firstOverpass(overpassQuery(minLat, minLon, maxLat, maxLon));
+    return parseOverpassToBuildings(data.elements);
   }
 
   function bearingDeg(from, to) {
@@ -364,45 +486,6 @@
     return [cloneAt(usT, usPos), cloneAt(cnT, cnPos)];
   }
 
-  function makeDroneCanvas() {
-    const s = 128;
-    const c = document.createElement('canvas');
-    c.width = c.height = s;
-    const ctx = c.getContext('2d');
-    ctx.clearRect(0, 0, s, s);
-    const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 60);
-    g.addColorStop(0, 'rgba(61,214,140,0.45)');
-    g.addColorStop(1, 'rgba(61,214,140,0)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, s, s);
-    ctx.strokeStyle = '#3dd68c';
-    ctx.lineWidth = 6;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(24, 24); ctx.lineTo(104, 104);
-    ctx.moveTo(104, 24); ctx.lineTo(24, 104);
-    ctx.stroke();
-    [[24, 24], [104, 24], [24, 104], [104, 104]].forEach(([x, y]) => {
-      ctx.beginPath();
-      ctx.arc(x, y, 10, 0, Math.PI * 2);
-      ctx.fillStyle = '#0d121a';
-      ctx.fill();
-      ctx.strokeStyle = '#3d9cf0';
-      ctx.lineWidth = 3;
-      ctx.stroke();
-    });
-    ctx.fillStyle = '#3d9cf0';
-    ctx.beginPath();
-    ctx.roundRect(44, 44, 40, 40, 8);
-    ctx.fill();
-    ctx.fillStyle = '#e7ecf3';
-    ctx.font = 'bold 14px system-ui,sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('UAV', 64, 64);
-    return c;
-  }
-
   function makeRadarCanvas(isUs) {
     const size = 96;
     const canvas = document.createElement('canvas');
@@ -458,20 +541,66 @@
       requestRenderMode: false,
     });
 
-    viewer.scene.globe.depthTestAgainstTerrain = false;
+    // Morning in Beijing so building walls catch the sun instead of a flat noon wash.
+    viewer.clock.currentTime = Cesium.JulianDate.fromIso8601('2026-06-21T02:00:00Z');
+    viewer.clock.shouldAnimate = false;
+    // Globe imagery stays unlit so Esri tiles are not a dark disk while buildings
+    // still take the sun (PerInstanceColorAppearance uses scene.light).
     viewer.scene.globe.enableLighting = false;
-    viewer.clock.shouldAnimate = true;
+    viewer.scene.globe.depthTestAgainstTerrain = true;
+    viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#6a7d55');
+    if (viewer.scene.light && 'intensity' in viewer.scene.light) {
+      viewer.scene.light.intensity = 2.4;
+    }
 
+    const dronePos = new Cesium.CallbackProperty(() => droneCartesian(), false);
     droneEntity = viewer.entities.add({
       id: 'uav-drone',
       show: false,
-      position: Cesium.Cartesian3.fromDegrees(116.46, 39.908, 90),
-      billboard: {
-        image: makeDroneCanvas(),
-        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+      position: dronePos,
+      orientation: new Cesium.CallbackProperty(() => droneOrientation(), false),
+      point: {
+        pixelSize: 11,
+        color: Cesium.Color.fromCssColorString('#3dd68c'),
+        outlineColor: Cesium.Color.WHITE,
+        outlineWidth: 2,
         disableDepthTestDistance: Number.POSITIVE_INFINITY,
-        scale: 0.55,
       },
+      box: {
+        dimensions: new Cesium.Cartesian3(48, 22, 9),
+        material: Cesium.Color.fromCssColorString('#3dd68c').withAlpha(0.95),
+        outline: true,
+        outlineColor: Cesium.Color.WHITE,
+      },
+      label: {
+        text: 'UAV',
+        font: 'bold 13px sans-serif',
+        fillColor: Cesium.Color.WHITE,
+        outlineColor: Cesium.Color.BLACK,
+        outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+        pixelOffset: new Cesium.Cartesian2(0, -18),
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+
+    const canvas = viewer.scene.canvas;
+    const markSteered = () => {
+      userSteered = true;
+      if (followCam) {
+        followCam = false;
+        viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+      }
+    };
+    canvas.addEventListener('pointerdown', markSteered, true);
+    canvas.addEventListener('wheel', markSteered, { capture: true, passive: true });
+    window.addEventListener('resize', scheduleResize);
+    if (window.visualViewport) window.visualViewport.addEventListener('resize', scheduleResize);
+
+    viewer.resize();
+    frameCorridor({
+      start: { lat: 39.908, lon: 116.46, alt: 90 },
+      goal: { lat: 39.912, lon: 116.455, alt: 110 },
     });
 
     viewer.scene.preUpdate.addEventListener(() => {
@@ -483,14 +612,99 @@
   }
 
   function removePathEntity() {
-    if (pathEntity) viewer.entities.remove(pathEntity);
-    const byId = viewer.entities.getById('uav-path');
-    if (byId) viewer.entities.remove(byId);
+    for (const id of ['uav-path', 'uav-path-wall', 'uav-trail']) {
+      const byId = viewer.entities.getById(id);
+      if (byId) viewer.entities.remove(byId);
+    }
     pathEntity = null;
+  }
+
+  function clearBuildingPrimitive() {
+    if (buildingPrimitive && viewer) {
+      viewer.scene.primitives.remove(buildingPrimitive);
+    }
+    buildingPrimitive = null;
+  }
+
+  function buildingColor(heightM) {
+    const t = Math.max(0, Math.min(1, (heightM || 15) / 200));
+    return Cesium.Color.fromBytes(
+      Math.round(176 - t * 50),
+      Math.round(186 - t * 36),
+      Math.round(198 - t * 8),
+      255
+    );
+  }
+
+  function addBuildingPrimitive(buildings) {
+    clearBuildingPrimitive();
+    const instances = [];
+    for (const b of buildings || []) {
+      const fp = b.footprint || [];
+      if (fp.length < 3) continue;
+      try {
+        const positions = fp.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
+        const h = Math.max(3, Number(b.height_m) || 15);
+        instances.push(new Cesium.GeometryInstance({
+          geometry: new Cesium.PolygonGeometry({
+            polygonHierarchy: new Cesium.PolygonHierarchy(positions),
+            height: 0,
+            extrudedHeight: h,
+            vertexFormat: Cesium.PerInstanceColorAppearance.VERTEX_FORMAT,
+          }),
+          attributes: {
+            color: Cesium.ColorGeometryInstanceAttribute.fromColor(buildingColor(h)),
+          },
+        }));
+      } catch (err) {
+        console.warn('skip building', b.name, err);
+      }
+    }
+    if (!instances.length) return;
+    buildingPrimitive = viewer.scene.primitives.add(new Cesium.Primitive({
+      geometryInstances: instances,
+      appearance: new Cesium.PerInstanceColorAppearance({
+        closed: true,
+        translucent: false,
+        flat: false,
+      }),
+      asynchronous: instances.length > 40,
+    }));
+  }
+
+  function scheduleResize() {
+    if (resizeTimer) cancelAnimationFrame(resizeTimer);
+    resizeTimer = requestAnimationFrame(() => {
+      resizeTimer = 0;
+      if (!viewer || viewer.isDestroyed()) return;
+      viewer.resize();
+      if (!userSteered && !flight.active && baseMap) frameCorridor(baseMap);
+    });
+  }
+
+  function frameCorridor(map) {
+    if (!viewer || !map || !map.start || !map.goal || !globalThis.DemoFraming) return;
+    const canvas = viewer.scene.canvas;
+    if (!canvas || canvas.clientWidth < 2 || canvas.clientHeight < 2) return;
+    const f = DemoFraming.corridorFocus(map);
+    const center = Cesium.Cartesian3.fromDegrees(f.lon, f.lat, f.alt);
+    const sphere = new Cesium.BoundingSphere(center, f.radius);
+    viewer.camera.viewBoundingSphere(
+      sphere,
+      new Cesium.HeadingPitchRange(
+        Cesium.Math.toRadians(f.headingDeg),
+        Cesium.Math.toRadians(f.pitchDeg),
+        0
+      )
+    );
+    // viewBoundingSphere locks the camera to the target frame. Unlock so the
+    // user can still orbit, pan, and zoom out to the whole globe.
+    viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
   }
 
   function clearMapEntities() {
     removePathEntity();
+    clearBuildingPrimitive();
     const keep = new Set(['uav-drone']);
     const toRemove = [];
     viewer.entities.values.forEach((e) => {
@@ -501,23 +715,7 @@
 
   function rebuildCesiumScene(map, keepCamera) {
     clearMapEntities();
-
-    for (const b of map.buildings || []) {
-      const fp = b.footprint || [];
-      if (fp.length < 3) continue;
-      const positions = fp.map((p) => Cesium.Cartesian3.fromDegrees(p.lon, p.lat));
-      viewer.entities.add({
-        name: b.name || 'building',
-        polygon: {
-          hierarchy: new Cesium.PolygonHierarchy(positions),
-          extrudedHeight: b.height_m || 15,
-          height: 0,
-          material: Cesium.Color.fromCssColorString('#8a93a3').withAlpha(0.78),
-          outline: true,
-          outlineColor: Cesium.Color.BLACK.withAlpha(0.55),
-        },
-      });
-    }
+    addBuildingPrimitive(map.buildings || []);
 
     const radars = filteredRadars(map);
     for (const r of radars) {
@@ -622,24 +820,7 @@
 
     removePathEntity();
 
-    if (!keepCamera) flyCameraTo(map);
-  }
-
-  function flyCameraTo(map) {
-    const b = map.bounds || {};
-    const min = b.min || map.start;
-    const max = b.max || map.goal;
-    const midLat = ((min.lat || map.start.lat) + (max.lat || map.goal.lat)) / 2;
-    const midLon = ((min.lon || map.start.lon) + (max.lon || map.goal.lon)) / 2;
-    viewer.camera.flyTo({
-      destination: Cesium.Cartesian3.fromDegrees(midLon, midLat - 0.006, 2200),
-      orientation: {
-        heading: Cesium.Math.toRadians(0),
-        pitch: Cesium.Math.toRadians(-45),
-        roll: 0,
-      },
-      duration: 1.2,
-    });
+    if (!keepCamera) frameCorridor(map);
   }
 
   function drawPath(points, algo) {
@@ -655,17 +836,93 @@
         ? Cesium.Color.fromCssColorString('#f0d040')
         : Cesium.Color.fromCssColorString('#40d0e0');
 
+    const ground = [];
+    const minH = [];
+    const maxH = [];
+    for (const p of points) {
+      ground.push(p.lon, p.lat);
+      minH.push(0);
+      maxH.push(Math.max(0, p.alt ?? 0));
+    }
+    viewer.entities.add({
+      id: 'uav-path-wall',
+      wall: {
+        positions: Cesium.Cartesian3.fromDegreesArray(ground),
+        minimumHeights: minH,
+        maximumHeights: maxH,
+        material: color.withAlpha(0.32),
+      },
+    });
     pathEntity = viewer.entities.add({
       id: 'uav-path',
       polyline: {
         positions: Cesium.Cartesian3.fromDegreesArrayHeights(flat),
-        width: 6,
-        material: color,
-        depthFailMaterial: color.withAlpha(0.45),
+        width: 8,
+        material: new Cesium.PolylineGlowMaterialProperty({
+          glowPower: 0.18,
+          color: color,
+        }),
+        depthFailMaterial: color.withAlpha(0.65),
         clampToGround: false,
         arcType: Cesium.ArcType.NONE,
       },
     });
+  }
+
+  function droneSample() {
+    if (!flight.pts || flight.pts.length < 2) return null;
+    const here = sampleTrack(flight, flight.t || 0);
+    const ahead = sampleTrack(flight, Math.min((flight.t || 0) + 25, flight.total || 0));
+    return { here, ahead };
+  }
+
+  function droneCartesian() {
+    const s = droneSample();
+    if (!s) return Cesium.Cartesian3.fromDegrees(116.46, 39.908, 90);
+    return Cesium.Cartesian3.fromDegrees(s.here.lon, s.here.lat, s.here.alt);
+  }
+
+  function droneOrientation() {
+    const s = droneSample();
+    if (!s) return Cesium.Quaternion.IDENTITY;
+    const heading = Cesium.Math.toRadians(bearingDeg(s.here, s.ahead));
+    const pos = Cesium.Cartesian3.fromDegrees(s.here.lon, s.here.lat, s.here.alt);
+    return Cesium.Transforms.headingPitchRollQuaternion(
+      pos,
+      new Cesium.HeadingPitchRoll(heading, 0, 0)
+    );
+  }
+
+  function updateChaseCamera() {
+    if (!followCam || !flight.active || !viewer) return;
+    const s = droneSample();
+    if (!s) return;
+    const heading = Cesium.Math.toRadians(bearingDeg(s.here, s.ahead));
+    const pos = Cesium.Cartesian3.fromDegrees(s.here.lon, s.here.lat, s.here.alt);
+    // Behind and above the aircraft, looking along its heading. trackedEntity
+    // ignores a plain Cartesian3 viewFrom, so the chase is applied directly.
+    viewer.camera.lookAt(
+      pos,
+      new Cesium.HeadingPitchRange(heading, Cesium.Math.toRadians(-28), 460)
+    );
+  }
+
+  function trailPositions() {
+    if (!flight.pts || flight.pts.length < 2) return [];
+    const d = Math.min(Math.max(flight.t || 0, 0), flight.total || 0);
+    const out = [];
+    for (let i = 0; i < flight.pts.length; i++) {
+      if (flight.dist[i] > d) break;
+      const p = flight.pts[i];
+      out.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.alt));
+    }
+    const cur = sampleTrack(flight, d);
+    out.push(Cesium.Cartesian3.fromDegrees(cur.lon, cur.lat, cur.alt));
+    if (out.length < 2 && flight.pts[0]) {
+      const p = flight.pts[0];
+      out.push(Cesium.Cartesian3.fromDegrees(p.lon, p.lat, p.alt));
+    }
+    return out;
   }
 
   function haversineM(a, b) {
@@ -726,7 +983,14 @@
     flight.active = false;
     flight.t = 0;
     flight._hold = 0;
+    followCam = false;
+    if (viewer) {
+      viewer.trackedEntity = undefined;
+      viewer.camera.lookAtTransform(Cesium.Matrix4.IDENTITY);
+    }
     if (droneEntity) droneEntity.show = false;
+    const trail = viewer && viewer.entities.getById('uav-trail');
+    if (trail) viewer.entities.remove(trail);
     setFlyButtons(false);
   }
 
@@ -736,59 +1000,61 @@
       return false;
     }
     const track = buildFlightTrack(points);
-    const speed = Math.max(40, track.total / 12);
+    const speed = Math.max(28, track.total / 16);
     flight = { active: true, t: 0, ...track, speed, _hold: 0 };
-    if (droneEntity) {
-      droneEntity.show = true;
-      const here = sampleTrack(flight, 0);
-      droneEntity.position = Cesium.Cartesian3.fromDegrees(here.lon, here.lat, here.alt);
-    }
+    followCam = true;
+    if (droneEntity) droneEntity.show = true;
+    updateChaseCamera();
+    const oldTrail = viewer.entities.getById('uav-trail');
+    if (oldTrail) viewer.entities.remove(oldTrail);
+    viewer.entities.add({
+      id: 'uav-trail',
+      polyline: {
+        positions: new Cesium.CallbackProperty(() => trailPositions(), false),
+        width: 5,
+        material: Cesium.Color.fromCssColorString('#ffffff').withAlpha(0.9),
+        clampToGround: false,
+        arcType: Cesium.ArcType.NONE,
+      },
+    });
     setFlyButtons(true);
-    setStats('模拟飞行中：无人机图标沿路线移动…', 'ok');
+    setStats('模拟飞行中：镜头跟随无人机，白线是已飞航迹。拖拽可改为自由观察。', 'ok');
     return true;
   }
 
   function updateFlight(dt) {
     if (!flight.active || !droneEntity) return;
     flight.t += dt * flight.speed;
+    updateChaseCamera();
     if (flight.t >= flight.total) {
-      const end = sampleTrack(flight, flight.total);
-      droneEntity.position = Cesium.Cartesian3.fromDegrees(end.lon, end.lat, end.alt);
       flight.t = flight.total;
       flight._hold = (flight._hold || 0) + dt;
-      if (flight._hold > 1.0) {
+      if (flight._hold > 1.2) {
         stopFlight();
         setStats('飞行结束。可再次点击「模拟飞行」重播。', 'ok');
       }
-      return;
+    } else {
+      flight._hold = 0;
     }
-    flight._hold = 0;
-    const here = sampleTrack(flight, flight.t);
-    droneEntity.position = Cesium.Cartesian3.fromDegrees(here.lon, here.lat, here.alt);
-  }
-
-  async function ensurePlanner() {
-    if (plannerModule) return plannerModule;
-    if (typeof createPlanner !== 'function') {
-      throw new Error('createPlanner not found — rebuild WASM (./web/build.sh)');
-    }
-    plannerModule = await createPlanner();
-    return plannerModule;
   }
 
   async function loadSampleAndShow() {
+    setChip('正在打开离线样例…', true);
     setStats('Loading offline sample…', '');
     const res = await fetch('./sample_map.json');
     if (!res.ok) throw new Error('Cannot load sample_map.json');
     baseMap = await res.json();
     offlineTemplate = structuredClone(baseMap);
     fillLatLon(baseMap);
+    userSteered = false;
     rebuildCesiumScene(baseMap, false);
     const nB = (baseMap.buildings || []).length;
     const nR = filteredRadars(baseMap).length;
+    setChip('样例地图已显示 · OSM 建筑后台加载中', true);
     setStats(
-      `Offline sample ready · buildings: ${nB}  radars: ${nR}\n正在拉取 OSM…`,
-      ''
+      `样例已就绪，可直接规划 · buildings: ${nB}  radars: ${nR}\n` +
+        `OSM 在后台加载（Overpass 慢时不必等待）`,
+      'ok'
     );
   }
 
@@ -809,33 +1075,45 @@
     };
   }
 
-  async function onLoadMap() {
+  async function onLoadMap(opts) {
+    const background = !!(opts && opts.background);
     if (!baseMap) {
       try {
         await loadSampleAndShow();
       } catch (e) {
         console.error(e);
         setStats(`Load error: ${e.message || e}`, 'err');
+        setChip('样例地图加载失败', true);
         return;
       }
     }
 
+    const seq = ++loadSeq;
     const { start, goal } = readStartGoalFromInputs();
-    setStats('正在从 OSM Overpass 加载建筑…\nFetching OSM buildings…', '');
-    spinner.classList.add('show');
-    if (planBtn) planBtn.disabled = true;
+    if (!background) {
+      setChip('正在从 OSM 加载这一带的建筑…', true);
+      setStats('正在从 OSM Overpass 加载建筑…\n样例场景仍可查看；规划会在加载完成后使用新建筑。', '');
+    }
     if ($('loadMapBtn')) $('loadMapBtn').disabled = true;
 
     try {
       const bbox = padBbox(start, goal, 1500);
-      const buildings = await fetchOsmBuildings(
+      const osmJob = fetchOsmBuildings(
         bbox.minLat,
         bbox.minLon,
         bbox.maxLat,
         bbox.maxLon
       );
+      osmJob.catch(() => {});
+      const buildings = await withTimeout(
+        osmJob,
+        22000,
+        'Overpass 超时（22s）。仍显示当前建筑，可稍后重试「加载地图」。'
+      );
+      if (seq !== loadSeq) return;
+      if (!buildings.length) throw new Error('Overpass returned no building footprints');
 
-      // Only mutate map state after Overpass succeeds.
+      const hadPath = lastPath.length > 0 || flight.active;
       stopFlight();
       lastPath = [];
       removePathEntity();
@@ -855,46 +1133,63 @@
       );
 
       fillLatLon(baseMap);
-      rebuildCesiumScene(baseMap, false);
+      // Background refresh of the same corridor should not yank a camera the user moved.
+      const keepCamera = background || userSteered;
+      if (!background) userSteered = false;
+      rebuildCesiumScene(baseMap, keepCamera);
+      if (!keepCamera) userSteered = false;
       const nR = filteredRadars(baseMap).length;
+      setChip(`OSM · ${buildings.length} 栋建筑`, true);
       setStats(
         `OSM 已加载 · buildings: ${buildings.length}  radars: ${nR}\n` +
           `bbox ≈ ${(bbox.maxLat - bbox.minLat).toFixed(3)}° lat × ` +
           `${(bbox.maxLon - bbox.minLon).toFixed(3)}° lon\n` +
-          `点击「规划」 / Click Plan`,
+          `点击「规划」 / Click Plan` +
+          (hadPath ? '\n建筑已更新，请重新规划。' : ''),
         'ok'
       );
     } catch (e) {
+      if (seq !== loadSeq) return;
       console.error(e);
+      setChip('OSM 加载失败 · 仍显示当前建筑', true);
       setStats(
         `Overpass 失败（保留上次建筑）: ${e.message || e}\n` +
-          `可稍后重试「加载地图」`,
+          `可稍后重试「加载地图」。样例场景可以先规划。`,
         'err'
       );
-      // Leave baseMap and scene untouched; snap inputs back to last good map.
       if (baseMap) fillLatLon(baseMap);
     } finally {
-      spinner.classList.remove('show');
-      if (planBtn) planBtn.disabled = false;
-      if ($('loadMapBtn')) $('loadMapBtn').disabled = false;
+      if (seq === loadSeq && $('loadMapBtn')) $('loadMapBtn').disabled = false;
     }
   }
 
   async function onPlan() {
+    if (planBtn.disabled) return;
     planBtn.disabled = true;
+    spinner.textContent = 'Planning…';
     spinner.classList.add('show');
     const stale = latLonStale();
     setStats('Planning…', '');
-    stopFlight();
+    const planSeq = loadSeq;
+    let tick = 0;
     try {
+      stopFlight();
       const map = currentMapJson();
       rebuildCesiumScene(map, true);
-      const mod = await ensurePlanner();
       const algo = $('algo').value;
       lastAlgo = algo;
       const informed = $('informed').checked;
-      const raw = mod.plan(JSON.stringify(map), algo, informed);
+      const t0 = performance.now();
+      tick = setInterval(() => {
+        spinner.textContent = 'Planning… ' + Math.floor((performance.now() - t0) / 1000) + 's';
+      }, 400);
+      // WASM runs in a worker. A 20s cap always clears this overlay.
+      const raw = await runPlan(JSON.stringify(map), algo, informed, 20000);
       const result = JSON.parse(raw);
+      if (planSeq !== loadSeq) {
+        setStats('建筑已在规划期间更新，请再点一次「规划」。\nBuildings changed during planning — Plan again.', 'err');
+        return;
+      }
       if (!result.success) {
         lastPath = [];
         drawPath([], algo);
@@ -929,7 +1224,9 @@
       console.error(e);
       setStats(`Error: ${e.message || e}`, 'err');
     } finally {
+      if (tick) clearInterval(tick);
       spinner.classList.remove('show');
+      spinner.textContent = 'Planning…';
       planBtn.disabled = false;
     }
   }
@@ -946,6 +1243,7 @@
   function onReset() {
     if (!baseMap) return;
     stopFlight();
+    userSteered = false;
     fillLatLon(baseMap);
     $('algo').value = 'astar';
     $('informed').checked = true;
@@ -972,23 +1270,11 @@
     startFlight(lastPath);
   }
 
-  async function main() {
-    if (typeof Cesium === 'undefined') {
-      setStats('Cesium failed to load from CDN', 'err');
-      return;
-    }
-    initViewer();
-    try {
-      await loadSampleAndShow();
-    } catch (e) {
-      console.warn('Offline sample failed:', e);
-    }
-    // Auto-load OSM once for Guomao (or current input) defaults.
-    await onLoadMap();
+  function bindUi() {
     planBtn.addEventListener('click', onPlan);
     $('resetBtn').addEventListener('click', onReset);
     $('loadMapBtn').addEventListener('click', () => {
-      onLoadMap().catch((e) => setStats(String(e), 'err'));
+      onLoadMap({ background: false }).catch((e) => setStats(String(e), 'err'));
     });
     for (const id of ['radarUs', 'radarCn']) {
       $(id).addEventListener('change', refreshRadarVisibility);
@@ -999,7 +1285,27 @@
     if ($('flyBtn')) $('flyBtn').addEventListener('click', flyHandler);
     if ($('flyFab')) $('flyFab').addEventListener('click', flyHandler);
     setFlyButtons(false);
-    ensurePlanner().catch((e) => console.warn('WASM preload:', e));
+  }
+
+  async function main() {
+    if (typeof Cesium === 'undefined') {
+      setStats('Cesium failed to load from CDN', 'err');
+      setChip('Cesium 未能从 CDN 加载', true);
+      return;
+    }
+    initViewer();
+    bindUi();
+    try {
+      await loadSampleAndShow();
+    } catch (e) {
+      console.warn('Offline sample failed:', e);
+      setChip('离线样例加载失败', true);
+    }
+    // OSM continues in the background; the sample globe is already interactive.
+    onLoadMap({ background: true }).catch((e) => {
+      console.warn(e);
+      setChip('OSM 加载失败 · 仍显示当前建筑', true);
+    });
   }
 
   main().catch((e) => {

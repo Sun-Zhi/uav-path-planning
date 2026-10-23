@@ -33,6 +33,7 @@ uav-path-planning/
 ├── docs/                 # GitHub Pages demo
 │   ├── index.html
 │   ├── app.js
+│   ├── framing.js
 │   ├── sample_map.json
 │   ├── planner.js
 │   └── planner.wasm
@@ -102,9 +103,9 @@ ctest --test-dir build --output-on-failure
 
 **https://sun-zhi.github.io/uav-path-planning/**
 
-**用法：** 任意经纬度（默认北京国贸 CBD：起点约 `39.908°N, 116.460°E`，终点约 `39.912°N, 116.455°E`，高度 80–120 m）→ **加载地图**（Overpass 拉当地 OSM 建筑轮廓，卫星底图）→ **Plan**（WASM A\* / RRT\*）→ **▶模拟飞行**。CN/US 教学雷达开关可过滤代价与场景图标。
+**用法：** 任意经纬度（默认北京国贸 CBD：起点约 `39.908°N, 116.460°E`，终点约 `39.912°N, 116.455°E`，高度 80–120 m）→ 页面先显示离线样例和倾斜地球（可立刻 **Plan**）→ **加载地图** / 后台 Overpass 拉当地 OSM 建筑 → **▶模拟飞行**（镜头跟随，航迹带高度帘）。CN/US 教学雷达开关可过滤代价与场景图标。
 
-默认打开会自动拉一次国贸一带 OSM；改经纬度后请再点「加载地图」。起终点外扩约 1.5 km，单次建筑上限约 800 栋。
+默认打开会在后台拉一次国贸一带 OSM，不挡住地球，也不会用「Planning…」遮罩等 Overpass。Overpass 超过约 22 秒会明确失败并留下当前建筑。点「规划」在后台线程跑 WASM，约 20 秒未完成会中止并关掉遮罩。改经纬度后请再点「加载地图」。起终点外扩约 1.5 km，单次建筑上限约 800 栋。窗口变窄或变矮时侧栏收到上方，相机会把起终点走廊保持在画面里。
 
 本地预览（需先有 `docs/planner.{js,wasm}`）：
 
@@ -141,7 +142,7 @@ python3 -m http.server 8080
 
 ## English (short)
 
-Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser demo (Cesium + OSM Overpass, WGS84 lat/lon): https://sun-zhi.github.io/uav-path-planning/ (rebuild WASM with `./web/build.sh`). Default Beijing Guomao; any lat/lon → 加载地图 → Plan → fly. Risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed) on OSM buildings + teaching SNR→Pd radars (SPY-6 / JY-27–class, lab-scaled to few-km map). Attributions: OSM, Esri imagery, CesiumJS. See `PAPERS.md`. No ROS. Exit 0 on success.
+Build with CMake (C++17). Run `./build/uav_planner --demo`. Browser demo (Cesium + OSM Overpass, WGS84 lat/lon): https://sun-zhi.github.io/uav-path-planning/ (rebuild WASM with `./web/build.sh`). Default Beijing Guomao opens on an oblique sample globe immediately; OSM buildings load in the background. Any lat/lon → 加载地图 → Plan → fly (chase camera). Risk-aware 26-neighbor 3D A\* and RRT\* (optional Informed) on OSM buildings + teaching SNR→Pd radars (SPY-6 / JY-27–class, lab-scaled to few-km map). Attributions: OSM, Esri imagery, CesiumJS. See `PAPERS.md`. No ROS. Exit 0 on success.
 
 ---
 
