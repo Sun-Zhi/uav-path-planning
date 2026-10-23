@@ -69,71 +69,121 @@ function marker(pos, color) {
   return m;
 }
 
-/** Horizontal sector wedge: yaw 0=+X, 90=+Y in map coords. */
+/** Visible radar site + coverage fan (viz wider than HPBW so it reads on screen). */
 function radarWedge(radar) {
   const group = new THREE.Group();
-  const isUs = (radar.id || '').includes('us_') || (radar.band || '').startsWith('S');
-  const color = isUs ? 0x4090f0 : 0xf0a040;
+  const isUs = (radar.id || '').includes('us_') || (radar.band || '').toUpperCase().startsWith('S');
+  const color = isUs ? 0x4aa3ff : 0xffb347;
+  const label = isUs ? 'US SPY-6' : 'CN JY-27';
 
   const r = radar.max_range_m || 50;
-  const halfAz = ((radar.az_hpbw_deg || 20) * Math.PI) / 360;
+  // Visualization beam: at least 50° so fans are obvious; physics still uses az_hpbw in WASM.
+  const vizAz = Math.max(radar.az_hpbw_deg || 20, 50);
+  const halfAz = (vizAz * Math.PI) / 360;
   const yaw = ((radar.yaw_deg || 0) * Math.PI) / 180;
-  const pitch = ((radar.pitch_deg || 0) * Math.PI) / 180;
+  const elHalf = Math.max(((radar.el_hpbw_deg || 15) * Math.PI) / 360, 0.12);
   const cx = radar.position.x;
   const cy = radar.position.y;
-  const cz = radar.position.z;
-  const segments = 28;
-  const positions = [];
-  for (let i = 0; i < segments; i++) {
-    const a0 = yaw - halfAz + (2 * halfAz * i) / segments;
-    const a1 = yaw - halfAz + (2 * halfAz * (i + 1)) / segments;
-    const cp = Math.cos(pitch);
-    const sp = Math.sin(pitch);
-    const p0x = cx + r * Math.cos(a0) * cp;
-    const p0y = cy + r * Math.sin(a0) * cp;
-    const p0z = cz + r * sp;
-    const p1x = cx + r * Math.cos(a1) * cp;
-    const p1y = cy + r * Math.sin(a1) * cp;
-    const p1z = cz + r * sp;
-    // map (x,y,z) → three (x,z,y)
-    positions.push(cx, cz, cy, p0x, p0z, p0y, p1x, p1z, p1y);
-  }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.computeVertexNormals();
-  const mat = new THREE.MeshBasicMaterial({
-    color,
-    transparent: true,
-    opacity: 0.22,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
-  group.add(new THREE.Mesh(geo, mat));
+  const cz = Math.max(radar.position.z || 2, 2);
+  const segments = 36;
+  const rings = 3; // stacked fans for volume
 
-  // Outline arc
-  const arcPts = [];
+  const toThree = (x, y, z) => [x, z, y];
+
+  for (let ring = 0; ring < rings; ring++) {
+    const elev = -elHalf + (2 * elHalf * ring) / Math.max(rings - 1, 1);
+    const cp = Math.cos(elev);
+    const sp = Math.sin(elev);
+    const positions = [];
+    for (let i = 0; i < segments; i++) {
+      const a0 = yaw - halfAz + (2 * halfAz * i) / segments;
+      const a1 = yaw - halfAz + (2 * halfAz * (i + 1)) / segments;
+      const p0x = cx + r * Math.cos(a0) * cp;
+      const p0y = cy + r * Math.sin(a0) * cp;
+      const p0z = cz + r * sp;
+      const p1x = cx + r * Math.cos(a1) * cp;
+      const p1y = cy + r * Math.sin(a1) * cp;
+      const p1z = cz + r * sp;
+      positions.push(...toThree(cx, cy, cz), ...toThree(p0x, p0y, p0z), ...toThree(p1x, p1y, p1z));
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geo.computeVertexNormals();
+    group.add(
+      new THREE.Mesh(
+        geo,
+        new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: ring === 1 ? 0.32 : 0.18,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        })
+      )
+    );
+  }
+
+  // Bright outline on mid elevation
+  const arcPts = [new THREE.Vector3(...toThree(cx, cy, cz))];
   for (let i = 0; i <= segments; i++) {
     const a = yaw - halfAz + (2 * halfAz * i) / segments;
-    const cp = Math.cos(pitch);
-    const sp = Math.sin(pitch);
-    const px = cx + r * Math.cos(a) * cp;
-    const py = cy + r * Math.sin(a) * cp;
-    const pz = cz + r * sp;
-    arcPts.push(new THREE.Vector3(px, pz, py));
+    const px = cx + r * Math.cos(a);
+    const py = cy + r * Math.sin(a);
+    arcPts.push(new THREE.Vector3(...toThree(px, py, cz)));
   }
-  arcPts.unshift(new THREE.Vector3(cx, cz, cy));
-  arcPts.push(new THREE.Vector3(cx, cz, cy));
-  const lineGeo = new THREE.BufferGeometry().setFromPoints(arcPts);
-  const lineMat = new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.65 });
-  group.add(new THREE.Line(lineGeo, lineMat));
-
-  // Site marker
-  const site = new THREE.Mesh(
-    new THREE.SphereGeometry(1.2, 16, 12),
-    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.35 })
+  arcPts.push(new THREE.Vector3(...toThree(cx, cy, cz)));
+  group.add(
+    new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints(arcPts),
+      new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.95 })
+    )
   );
-  site.position.set(cx, cz, cy);
-  group.add(site);
+
+  // Radar mast (tall cylinder) + dish sphere — unmistakable sites
+  const mastH = 10;
+  const mast = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.7, 0.9, mastH, 12),
+    new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.55, metalness: 0.3 })
+  );
+  mast.position.set(cx, mastH / 2, cy);
+  group.add(mast);
+  const dish = new THREE.Mesh(
+    new THREE.SphereGeometry(2.2, 20, 16),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: color, emissiveIntensity: 0.7 })
+  );
+  dish.position.set(cx, mastH + 1.2, cy);
+  group.add(dish);
+
+  // Ground ring under site
+  const ringGeo = new THREE.RingGeometry(2.5, 4.5, 32);
+  const ringMat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.55, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(cx, 0.15, cy);
+  group.add(ring);
+
+  // Canvas label sprite
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(8,12,20,0.75)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.strokeStyle = '#' + color.toString(16).padStart(6, '0');
+  ctx.lineWidth = 4;
+  ctx.strokeRect(2, 2, 252, 60);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 28px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 128, 32);
+  const tex = new THREE.CanvasTexture(canvas);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
+  );
+  sprite.scale.set(18, 4.5, 1);
+  sprite.position.set(cx, mastH + 6, cy);
+  group.add(sprite);
 
   return group;
 }
