@@ -3,6 +3,7 @@
 #include "uav/radar.hpp"
 #include "uav/rrt_star.hpp"
 
+#include <algorithm>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -123,12 +124,17 @@ int main(int argc, char** argv) {
   uav::path_pd_stats(cfg.radars, astar_stats.path, cfg.uav_rcs, a_mean, a_max);
   print_stats("A* 3D (26-neighbor, risk+Pd-aware)", astar_stats, a_mean, a_max);
 
+  // Scale RRT* steps to map size / resolution (geo CBD maps are ~km-scale).
   uav::RRTStarParams rp;
   rp.informed_sampling = informed;
-  rp.max_iterations = 5000;
-  rp.step_size = 3.0;
-  rp.rewire_radius = 10.0;
-  rp.goal_tolerance = 4.0;
+  const double res = cfg.resolution;
+  const double dx = cfg.bounds.max_pt.x - cfg.bounds.min_pt.x;
+  const double dy = cfg.bounds.max_pt.y - cfg.bounds.min_pt.y;
+  const double span = std::max(dx, dy);
+  rp.max_iterations = span > 500.0 ? 8000 : 5000;
+  rp.step_size = std::max(3.0, res * 1.25);
+  rp.rewire_radius = std::max(10.0, res * 4.0);
+  rp.goal_tolerance = std::max(4.0, res * 1.5);
   uav::RRTStar3D rrt(env, rp);
   auto rrt_stats = rrt.plan(cfg.start, cfg.goal);
   double r_mean = 0, r_max = 0;

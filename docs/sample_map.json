@@ -1,62 +1,72 @@
 {
-  "comment": "Urban canyon + teaching SNR/Pd radars (SPY-6-class & JY-27-class, lab-scaled — not real params)",
-  "resolution": 2.0,
+  "comment": "Beijing Guomao CBD teaching sample (WGS84). Hand-authored footprints for offline --demo; radar ranges lab-scaled — not real system params.",
+  "coord_frame": "wgs84",
+  "origin": {"lat": 39.908, "lon": 116.460, "alt": 0},
+  "resolution": 20.0,
   "uav_rcs": 0.1,
   "pd_cost_weight": 25.0,
   "bounds": {
-    "min": {"x": 0, "y": 0, "z": 0},
-    "max": {"x": 100, "y": 100, "z": 40}
+    "min": {"lat": 39.902, "lon": 116.450, "alt": 0},
+    "max": {"lat": 39.916, "lon": 116.468, "alt": 200}
   },
-  "start": {"x": 5, "y": 5, "z": 12},
-  "goal":  {"x": 95, "y": 95, "z": 12},
+  "start": {"lat": 39.908, "lon": 116.460, "alt": 90},
+  "goal":  {"lat": 39.912, "lon": 116.455, "alt": 110},
   "buildings": [
     {
-      "name": "tower_A",
-      "min": {"x": 20, "y": 20, "z": 0},
-      "max": {"x": 35, "y": 40, "z": 35}
+      "name": "block_mid_corridor",
+      "height_m": 140,
+      "footprint": [
+        {"lat": 39.9092, "lon": 116.4568},
+        {"lat": 39.9092, "lon": 116.4582},
+        {"lat": 39.9104, "lon": 116.4582},
+        {"lat": 39.9104, "lon": 116.4568}
+      ]
     },
     {
-      "name": "tower_B",
-      "min": {"x": 45, "y": 10, "z": 0},
-      "max": {"x": 60, "y": 30, "z": 28}
+      "name": "tower_east",
+      "height_m": 120,
+      "footprint": [
+        {"lat": 39.9084, "lon": 116.4610},
+        {"lat": 39.9084, "lon": 116.4622},
+        {"lat": 39.9094, "lon": 116.4622},
+        {"lat": 39.9094, "lon": 116.4610}
+      ]
     },
     {
-      "name": "tower_C",
-      "min": {"x": 30, "y": 50, "z": 0},
-      "max": {"x": 50, "y": 70, "z": 32}
+      "name": "tower_north",
+      "height_m": 100,
+      "footprint": [
+        {"lat": 39.9110, "lon": 116.4548},
+        {"lat": 39.9110, "lon": 116.4560},
+        {"lat": 39.9120, "lon": 116.4560},
+        {"lat": 39.9120, "lon": 116.4548}
+      ]
     },
     {
-      "name": "tower_D",
-      "min": {"x": 65, "y": 45, "z": 0},
-      "max": {"x": 80, "y": 75, "z": 36}
-    },
-    {
-      "name": "low_block_E",
-      "min": {"x": 10, "y": 70, "z": 0},
-      "max": {"x": 25, "y": 90, "z": 18}
+      "name": "low_podium_west",
+      "height_m": 45,
+      "footprint": [
+        {"lat": 39.9070, "lon": 116.4545},
+        {"lat": 39.9070, "lon": 116.4560},
+        {"lat": 39.9082, "lon": 116.4560},
+        {"lat": 39.9082, "lon": 116.4545}
+      ]
     }
   ],
-  "risk_zones": [
-    {
-      "name": "ew_jammer_corridor",
-      "min": {"x": 55, "y": 55, "z": 5},
-      "max": {"x": 75, "y": 85, "z": 30},
-      "risk_multiplier": 4.0
-    }
-  ],
+  "risk_zones": [],
   "radars": [
     {
       "id": "us_spy6_class",
       "label": "US SPY-6–class (teaching, scaled) / 教学近似",
       "band": "S (~3 GHz label)",
-      "position": {"x": 40, "y": 5, "z": 2},
-      "yaw_deg": 90,
+      "position": {"lat": 39.9065, "lon": 116.4625, "alt": 5},
+      "yaw_deg": 135,
       "pitch_deg": 8,
       "az_hpbw_deg": 12,
       "el_hpbw_deg": 10,
-      "max_range_m": 55,
+      "max_range_m": 1200,
       "snr_ref_linear": 200,
-      "r_ref_m": 25,
+      "r_ref_m": 400,
       "sigma_ref_m2": 0.1,
       "snr_thresh_db": 10,
       "rcs_lo_factor": 1.0
@@ -65,14 +75,14 @@
       "id": "cn_jy27_class",
       "label": "CN JY-27–class (teaching, scaled) / 教学近似",
       "band": "VHF (~300 MHz label)",
-      "position": {"x": 5, "y": 50, "z": 2},
-      "yaw_deg": 0,
+      "position": {"lat": 39.9135, "lon": 116.4520, "alt": 5},
+      "yaw_deg": 315,
       "pitch_deg": 5,
       "az_hpbw_deg": 35,
       "el_hpbw_deg": 25,
-      "max_range_m": 80,
+      "max_range_m": 1500,
       "snr_ref_linear": 80,
-      "r_ref_m": 35,
+      "r_ref_m": 500,
       "sigma_ref_m2": 0.1,
       "snr_thresh_db": 8,
       "rcs_lo_factor": 4.0
